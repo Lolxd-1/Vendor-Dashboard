@@ -1,0 +1,47 @@
+Windows Registry Editor Version 5.00
+
+; ============================================================================
+;  QuickVerse vendor dashboard — autoplay allowlist (FINAL).
+;  Domain: vendor.quickverse.in
+;
+;  Allows the vendor order dashboard to play alert sounds without requiring
+;  the vendor to click the page first.
+;
+;  This uses AutoplayAllowlist rather than AutoplayAllowed. AutoplayAllowed=1
+;  would enable autoplay for the ENTIRE internet on this machine, meaning
+;  every ad on every site blasts audio. Scope it narrowly.
+;
+;  Requires administrator rights (HKLM). Right-click -> Run as administrator,
+;  or deploy via GPO / Intune / your RMM tool.
+;
+;  AFTER MERGING: fully close the browser (check Task Manager for lingering
+;  chrome.exe or msedge.exe processes), reopen, then verify at chrome://policy
+;  -> Reload policies -> filter "Autoplay". Status must read OK.
+;
+;  Policy changes only apply to NEWLY OPENED TABS.
+;
+;  To undo, use remove-order-alert-autoplay.reg alongside this file.
+; ============================================================================
+
+; ---------------------------------------------------------------- Chrome ---
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\AutoplayAllowlist]
+"1"="http://vendor.quickverse.in"
+"2"="[*.]quickverse.in"
+
+; ------------------------------------------------------------------ Edge ---
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\AutoplayAllowlist]
+"1"="http://vendor.quickverse.in"
+"2"="[*.]quickverse.in"
+
+; ============================================================================
+;  URL PATTERN RULES
+;
+;    A bare "*" is NOT valid. It is rejected and the policy silently does
+;    nothing -- it will still appear in chrome://policy, which makes this
+;    a genuinely nasty way to lose an afternoon.
+;
+;    [*.]quickverse.in       matches the domain and all subdomains
+;    http://vendor.quickverse.in  matches that exact origin
+;
+;    Values are numbered REG_SZ entries: "1", "2", "3"...
+; ============================================================================

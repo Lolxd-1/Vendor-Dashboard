@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; Removes the autoplay allowlist policy set by enable-order-alert-autoplay.reg
+; Keep this alongside the installer. Anything you deploy to a vendor machine
+; needs a clean way back off it.
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\AutoplayAllowlist]
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\AutoplayAllowlist]
