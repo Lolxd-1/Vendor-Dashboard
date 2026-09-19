@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Configures a vendor PC so the order dashboard can ring without interaction.
 
@@ -16,7 +16,7 @@
     works but only for the current user.
 
 .EXAMPLE
-    Production vendor PC (QuickVerse — the standard rollout command):
+    Production vendor PC (QuickVerse - the standard rollout command):
     .\Install-VendorDashboard.ps1 -SiteUrl "http://vendor.quickverse.in" -AddToStartup -NoSleep
 
 .EXAMPLE
@@ -75,9 +75,9 @@ if (-not $IsAdmin) {
     Write-Warn2 "(current user only) instead of HKLM (all users)."
 }
 
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # 1. Autoplay allowlist policy
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 if (-not $SkipPolicy) {
     Write-Step "Writing autoplay allowlist policy"
@@ -116,9 +116,9 @@ if (-not $SkipPolicy) {
     Write-Warn2 "Close the browser completely before testing."
 }
 
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # 2. Shortcut
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 Write-Step "Creating dashboard shortcut"
 
@@ -181,9 +181,9 @@ foreach ($dir in $locations) {
     }
 }
 
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # 3. Power plan
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 if ($NoSleep) {
     Write-Step "Disabling sleep on AC power"
@@ -199,9 +199,9 @@ if ($NoSleep) {
     }
 }
 
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # 4. Verification
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 Write-Step "Verifying policy in registry"
 
@@ -220,7 +220,7 @@ foreach ($t in @(
     if (-not $found) { Write-Warn2 "$($t.N): no policy found" }
 }
 
-# ───────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 Write-Host ""
 Write-Host "  Done. Now verify manually:" -ForegroundColor White
