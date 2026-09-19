@@ -23,3 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Automation (printer-draft experiments)
+automation/.env
+automation/credentials/token.json
+automation/output/
+automation/__pycache__/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
