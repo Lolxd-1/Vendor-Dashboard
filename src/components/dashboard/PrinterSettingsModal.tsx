@@ -1,30 +1,46 @@
 import { useEffect, useState } from "react";
 import { Printer, X } from "lucide-react";
-import { getPrinterSettings, savePrinterSettings, checkAgentOnline } from "../../utils/print/printAgent";
+import { getPrinterSettings, savePrinterSettings, checkAgentOnline, getAgentPrinters, getAgentVersion, REQUIRED_AGENT_VERSION } from "../../utils/print/printAgent";
 import { buildCounterBill, buildKitchenKOT } from "../../utils/print/billTemplates";
 import { printText } from "../../utils/print/printAgent";
 import toast from "react-hot-toast";
 
-// One-time setup per shop PC. Names must match Windows Settings → Printers
-// exactly, e.g. "EPSON TM-T82 Receipt" and "TVSE RP3200 Lite".
+// One-time setup per shop PC. Pick queues detected from the local agent
+// (e.g. "EPSON TM-T82X Receipt"). Single-printer pilot: same name in both.
 export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
   const [counter, setCounter] = useState("");
   const [kitchen, setKitchen] = useState("");
   const [gstin, setGstin] = useState("");
   const [fssai, setFssai] = useState("");
   const [agentOk, setAgentOk] = useState<boolean | null>(null);
+  const [agentPrinters, setAgentPrinters] = useState<string[]>([]);
+  const [agentVersion, setAgentVersion] = useState<string | null>(null);
+  const [samePrinter, setSamePrinter] = useState(true);
 
   useEffect(() => {
     const s = getPrinterSettings();
     setCounter(s.counterPrinter);
     setKitchen(s.kitchenPrinter);
+    setSamePrinter(s.counterPrinter === s.kitchenPrinter);
     setGstin(localStorage.getItem("qv_gstin") || "");
     setFssai(localStorage.getItem("qv_fssai") || "");
     checkAgentOnline().then(setAgentOk);
+    getAgentPrinters().then((list) => {
+      if (list.length) {
+        setAgentPrinters(list);
+        // Auto-fix legacy default (TM-T82 without X) when the X queue exists
+        if (list.includes("EPSON TM-T82X Receipt")) {
+          if (!list.includes(s.counterPrinter)) setCounter("EPSON TM-T82X Receipt");
+          if (!list.includes(s.kitchenPrinter)) setKitchen("EPSON TM-T82X Receipt");
+        }
+      }
+    });
+    getAgentVersion().then(setAgentVersion);
   }, []);
 
-  const save = () => {
-    savePrinterSettings({ counterPrinter: counter.trim(), kitchenPrinter: kitchen.trim(), agentPort: 1818 });
+  const save = (nextCounter = counter.trim(), nextKitchen = kitchen.trim()) => {
+    const finalKitchen = samePrinter ? nextCounter : nextKitchen;
+    savePrinterSettings({ counterPrinter: nextCounter, kitchenPrinter: finalKitchen, agentPort: 1818 });
     localStorage.setItem("qv_gstin", gstin.trim());
     localStorage.setItem("qv_fssai", fssai.trim());
     toast.success("Printer settings saved");
@@ -65,17 +81,47 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
         </div>
 
         <div className={`text-[11px] font-bold px-3 py-2 rounded-lg mb-4 ${agentOk ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-          {agentOk === null ? "Checking helper..." : agentOk ? "● Helper Online — silent auto-print ready" : "● Helper not found — will use browser print. Install print-agent on billing PC."}
+          {agentOk === null ? "Checking helper..." : agentOk ? `● Helper Online${agentVersion ? ` v${agentVersion}` : ""} — silent auto-print ready` : "● Helper not found — will use browser print. Install print-agent on billing PC."}
         </div>
+        {agentOk && agentVersion && agentVersion !== REQUIRED_AGENT_VERSION && (
+          <div className="text-[11px] font-bold px-3 py-2 rounded-lg mb-4 bg-red-50 text-red-700">
+            Agent v{agentVersion} found — please update to v{REQUIRED_AGENT_VERSION} (GitHub Releases) before scaling.
+          </div>
+        )}
+
+        <label className="flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500 mb-3">
+          <input type="checkbox" checked={samePrinter} onChange={(e) => {
+            const v = e.target.checked;
+            setSamePrinter(v);
+            if (v) setKitchen(counter);
+          }} />
+          Single printer (Bill + KOT on same queue)
+        </label>
 
         <label className="text-[11px] font-bold uppercase text-slate-500">Counter Bill Printer</label>
-        <input value={counter} onChange={(e) => setCounter(e.target.value)} placeholder="EPSON TM-T82 Receipt"
-          className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800" />
+        {agentPrinters.length ? (
+          <select value={counter} onChange={(e) => { setCounter(e.target.value); if (samePrinter) setKitchen(e.target.value); }}
+            className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800">
+            {agentPrinters.map((p) => <option key={p} value={p}>{p}</option>)}
+            {!agentPrinters.includes(counter) && <option value={counter}>{counter} (saved)</option>}
+          </select>
+        ) : (
+          <input value={counter} onChange={(e) => { setCounter(e.target.value); if (samePrinter) setKitchen(e.target.value); }} placeholder="EPSON TM-T82X Receipt"
+            className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800" />
+        )}
         <button onClick={() => testPrint("counter")} className="text-[11px] font-bold text-blue-600 mb-3">Test Counter Print</button>
 
         <label className="text-[11px] font-bold uppercase text-slate-500">Kitchen KOT Printer</label>
-        <input value={kitchen} onChange={(e) => setKitchen(e.target.value)} placeholder="TVSE RP3200 Lite"
-          className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800" />
+        {agentPrinters.length && !samePrinter ? (
+          <select value={kitchen} onChange={(e) => setKitchen(e.target.value)}
+            className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800">
+            {agentPrinters.map((p) => <option key={p} value={p}>{p}</option>)}
+            {!agentPrinters.includes(kitchen) && <option value={kitchen}>{kitchen} (saved)</option>}
+          </select>
+        ) : (
+          <input value={kitchen} disabled={samePrinter} onChange={(e) => setKitchen(e.target.value)} placeholder="EPSON TM-T82X Receipt"
+            className="w-full text-sm px-3 py-2 mt-1 mb-2 border rounded-lg bg-white dark:bg-zinc-800 disabled:opacity-60" />
+        )}
         <button onClick={() => testPrint("kitchen")} className="text-[11px] font-bold text-blue-600 mb-3">Test Kitchen Print</button>
 
         <div className="grid grid-cols-2 gap-2 mb-4">
@@ -91,7 +137,7 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
           </div>
         </div>
 
-        <button onClick={save} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider">Save</button>
+        <button onClick={() => save()} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider">Save</button>
         <p className="text-[10px] text-slate-400 mt-2">Names must match Windows Settings → Printers exactly. Same queue PetPooja uses — jobs line up, never mix.</p>
       </div>
     </div>

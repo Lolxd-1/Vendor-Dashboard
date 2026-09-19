@@ -11,6 +11,10 @@ export default defineConfig(() => {
       global: "window",
     },
 
+    // Relative base so `dist/` works from any HTTP origin/subpath
+    // (e.g. http://prd.quickverse.in/vendor/) with no HTTPS requirement.
+    base: "./",
+
     build: {
       outDir: "dist",
       sourcemap: false,

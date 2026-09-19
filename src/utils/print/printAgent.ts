@@ -9,9 +9,43 @@ export interface PrinterSettings {
 }
 
 export const DEFAULT_PRINTERS: PrinterSettings = {
-  counterPrinter: "EPSON TM-T82 Receipt",
-  kitchenPrinter: "TVSE RP3200 Lite",
+  // Single-printer default for pilot: same 80mm queue prints Bill+KOT back-to-back.
+  // Shops with 2 printers change kitchen to the 2nd queue name later — no code change.
+  counterPrinter: "EPSON TM-T82X Receipt",
+  kitchenPrinter: "EPSON TM-T82X Receipt",
   agentPort: 1818,
+};
+
+export const REQUIRED_AGENT_VERSION = "1.1.0";
+
+export const getAgentPrinters = async (): Promise<string[]> => {
+  const { agentPort } = getPrinterSettings();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`http://127.0.0.1:${agentPort}/printers`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.printers) ? data.printers : [];
+  } catch {
+    return [];
+  }
+};
+
+export const getAgentVersion = async (): Promise<string | null> => {
+  const { agentPort } = getPrinterSettings();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    const res = await fetch(`http://127.0.0.1:${agentPort}/status`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.version === "string" ? data.version : null;
+  } catch {
+    return null;
+  }
 };
 
 export const getPrinterSettings = (): PrinterSettings => {

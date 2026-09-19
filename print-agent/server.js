@@ -106,15 +106,27 @@ function listWindowsPrinters(cb) {
   });
 }
 
+const AGENT_VERSION = "1.1.0";
+
 const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // PNA (Private Network Access): lets a future HTTPS dashboard
+  // (https://vendor.*) talk to this HTTP loopback agent. No-op on HTTP.
+  // Chrome sends `Access-Control-Request-Private-Network: true` preflight;
+  // we answer `Allow-Private-Network: true` so print keeps working post-HTTPS.
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
   if (req.method === "GET" && req.url === "/status") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ online: true, version: "1.0.0" }));
+    return res.end(JSON.stringify({ online: true, version: AGENT_VERSION }));
+  }
+
+  if (req.method === "GET" && req.url === "/version") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ version: AGENT_VERSION }));
   }
 
   if (req.method === "GET" && req.url === "/printers") {
