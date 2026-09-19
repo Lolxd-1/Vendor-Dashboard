@@ -12,6 +12,11 @@
       6. Prints 42-col self-test slip + PASS/FAIL checklist
 
 .EXAMPLE
+    Vercel production (HTTPS, proxy to HTTP backend — default path):
+    .\Install-QuickVerse.ps1 -SiteUrl "https://<your-app>.vercel.app/" -AddToStartup -NoSleep
+
+.EXAMPLE
+    HTTP interim (same-origin serve from backend host):
     .\Install-QuickVerse.ps1 -SiteUrl "http://prd.quickverse.in/vendor/" -AddToStartup -NoSleep
 
 .EXAMPLE
@@ -20,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $SiteUrl = "http://prd.quickverse.in/vendor/",
+    [string] $SiteUrl = "https://quickverse-vendor-dashboard.vercel.app/",
     [string] $AgentSource = "",
     [string] $AgentDest = "C:\QuickVerse\print-agent",
     [string] $ShortcutName = "QuickVerse Vendor",

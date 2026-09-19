@@ -1,4 +1,11 @@
-# QuickVerse 200-shop rollout — v1.1.0 (HTTP interim, ₹0)
+# QuickVerse 200-shop rollout — v1.2.0 (Vercel HTTPS + proxy, ₹0)
+
+## Deploy target: Vercel Hobby free
+- Import `Lolxd-1/Vendor-Dashboard`, branch `experiment-loud-bell`, framework Vite.
+- Build command: `tsc -b && vite build` (repo default). Output dir: `dist`.
+- Env vars: `VITE_API_URL=""` (same-origin proxy), optional `VITE_REQUEST_OTP_URL`, `VITE_LOGIN_URL` only if backend moves auth paths.
+- `vercel.json` proxies `/quickVerse/:path*` → `http://prd.quickverse.in/quickVerse/:path*` (server-side, no mixed content), SPA fallback last.
+- Result: `https://<your-app>.vercel.app/` calls same-origin `/quickVerse/...`, Vercel fetches HTTP backend. PWA/SW active again (secure context). Print agent loopback covered by PNA header (v1.1.0+).
 
 ## What ships in v1.1.0
 - Dashboard `dist/` works from any HTTP origin/subpath (`vite base "./"`, SW guarded to secure contexts only).
@@ -8,15 +15,17 @@
 
 ## Per-shop 2-min flow (one guy)
 ```powershell
-.\Install-QuickVerse.ps1 -SiteUrl "http://prd.quickverse.in/vendor/" -AddToStartup -NoSleep
+.\Install-QuickVerse.ps1 -SiteUrl "https://<your-app>.vercel.app/" -AddToStartup -NoSleep
 ```
+HTTP-interim alternative (same-origin serve, no Vercel): `-SiteUrl "http://prd.quickverse.in/vendor/"`.
 1. Driver: EPSON APD6 for TM-T82X, paper 80mm. Queue must appear in Settings → Printers.
 2. Run installer (admin preferred). Note PASS lines: agent v1.1.0, queues listed, self-test printed.
 3. Open QuickVerse shortcut → Printer → confirm queue → Single printer ticked → Save → Test Counter Print.
 4. Gate: `123456789012...42` is ONE line, Bill columns aligned, no right-edge cut.
 
-## Serve dashboard (HTTP interim)
-Copy `dist/*` to backend static at `http://prd.quickverse.in/vendor/` (same origin = no CORS/mixed-content/PNA issues). Keep `VITE_API_URL=http://prd.quickverse.in`.
+## Serve dashboard
+- Primary: Vercel (above). Keep `VITE_API_URL=""` so all API goes through the proxy.
+- Fallback (HTTP interim): copy `dist/*` to backend static at `http://prd.quickverse.in/vendor/` with `VITE_API_URL=http://prd.quickverse.in`.
 
 ## Scale order
 Pilot 5 mixed shops → 20 → 200. Each gate: test-slip photo + live Bill+KOT + reboot auto-start + PetPooja FIFO check.

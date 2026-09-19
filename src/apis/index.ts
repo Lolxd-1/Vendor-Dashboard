@@ -1,6 +1,8 @@
 import { createApi } from "@reduxjs/toolkit/query/react";
 import { fetchBaseQuery } from "@reduxjs/toolkit/query";
-export const baseurl = import.meta.env.VITE_API_URL;
+// Same-origin default ("") so the app works behind the Vercel proxy with no env set.
+// Local dev uses VITE_API_URL=http://prd.quickverse.in/ from .env.
+export const baseurl: string = import.meta.env.VITE_API_URL ?? "";
 const api = createApi({
   reducerPath: "api",
   tagTypes: ["VendorSchedule"],

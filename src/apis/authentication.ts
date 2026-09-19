@@ -3,10 +3,11 @@ import api from "./index";
 
 const authenticationApi = api.injectEndpoints({
   endpoints: (build) => ({
-    // Request Otp for a given mobile number
+    // Request Otp for a given mobile number.
+    // Overridable via VITE_REQUEST_OTP_URL (backend contract may move off v1).
     requestOtp: build.mutation({
       query: (phone: string) => ({
-        url: "/quickVerse/v1/requestOtp",  // change vendor otp endpoint url
+        url: import.meta.env.VITE_REQUEST_OTP_URL || "/quickVerse/v1/requestOtp",
         method: "POST",
         body: { phone },
       }),
@@ -23,7 +24,7 @@ const authenticationApi = api.injectEndpoints({
         otp: string;
         verificationId: string;
       }) => ({
-        url: "/quickVerse/v1/login", // change vendor login endpoint url
+        url: import.meta.env.VITE_LOGIN_URL || "/quickVerse/v1/login",
         method: "POST",
         body: { phone: `${phone}`, otp, verificationId },
       }),

@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/quickVerse/:path*", "destination": "http://prd.quickverse.in/quickVerse/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
