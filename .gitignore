@@ -29,3 +29,11 @@ Printes& Invoice/
 results/
 print-agent/package-lock.json
 
+# Automation (printer-draft experiments)
+automation/.env
+automation/credentials/token.json
+automation/output/
+automation/__pycache__/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
