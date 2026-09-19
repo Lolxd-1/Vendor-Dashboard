@@ -16,7 +16,7 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.1.0";
+export const REQUIRED_AGENT_VERSION = "1.2.0";
 
 export const getAgentPrinters = async (): Promise<string[]> => {
   const { agentPort } = getPrinterSettings();

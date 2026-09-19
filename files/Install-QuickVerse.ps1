@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.1.0 (EPSON TM-T82X).
+    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.2.0 (EPSON TM-T82X, no Node).
 
 .DESCRIPTION
     One guy, 2 mins per shop, zero cost:
@@ -44,7 +44,7 @@ function Write-Fail ($m) { Write-Host "    [fail] $m" -ForegroundColor Red }
 
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 Write-Host ""
-Write-Host "  QuickVerse Shop Setup v1.1.0" -ForegroundColor White
+Write-Host "  QuickVerse Shop Setup v1.2.0 (no Node needed)" -ForegroundColor White
 Write-Host "  Site: $SiteUrl"
 Write-Host "  Admin: $IsAdmin"
 
@@ -52,18 +52,17 @@ if (-not $AgentSource) {
     $AgentSource = Join-Path $PSScriptRoot "..\print-agent"
     if (-not (Test-Path $AgentSource)) { $AgentSource = Join-Path (Get-Location) "print-agent" }
 }
-if (-not (Test-Path (Join-Path $AgentSource "server.js"))) {
-    Write-Fail "print-agent/server.js not found at $AgentSource. Run from repo root or pass -AgentSource."
+if (-not (Test-Path (Join-Path $AgentSource "agent.ps1"))) {
+    Write-Fail "print-agent/agent.ps1 not found at $AgentSource. Run from repo root or pass -AgentSource."
     exit 1
 }
 
-# ── 0. Node check ──
-Write-Step "Checking Node.js (agent needs it)"
+# ── 0. PowerShell check (built into every Windows — nothing to install) ──
+Write-Step "Checking Windows PowerShell (agent is pure PowerShell, no Node needed)"
 try {
-    $nv = (node --version) 2>$null
-    Write-Ok "Node $nv"
+    Write-Ok "PowerShell $($PSVersionTable.PSVersion) — nothing to install"
 } catch {
-    Write-Fail "Node.js not found. Install Node LTS free (nodejs.org), then re-run."
+    Write-Fail "PowerShell not found — this Windows is too old."
     exit 1
 }
 
@@ -82,19 +81,18 @@ if ($printers -contains $ExpectedPrinter) {
 # ── 2. Install agent files ──
 Write-Step "Installing print agent to $AgentDest"
 New-Item -ItemType Directory -Path $AgentDest -Force | Out-Null
-Copy-Item (Join-Path $AgentSource "server.js") $AgentDest -Force
-Copy-Item (Join-Path $AgentSource "package.json") $AgentDest -Force
+Copy-Item (Join-Path $AgentSource "agent.ps1") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "start-agent.bat") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "start-agent.vbs") $AgentDest -Force
-Write-Ok "Agent files copied"
+Write-Ok "Agent files copied (pure PowerShell — no Node, no npm)"
 
 # ── 3. Task Scheduler at logon (primary) ──
 Write-Step "Registering auto-start (Task Scheduler)"
 try {
-    $action = New-ScheduledTaskAction -Execute "node" -Argument "`"$AgentDest\server.js`"" -WorkingDirectory $AgentDest
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$AgentDest\agent.ps1`"" -WorkingDirectory $AgentDest
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $trigger -Settings $settings -Description "QuickVerse silent 80mm print agent v1.1.0" -Force | Out-Null
+    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $trigger -Settings $settings -Description "QuickVerse silent 80mm print agent v1.2.0 (no Node)" -Force | Out-Null
     Write-Ok "Scheduled task 'QuickVerse Print Agent' registered"
 } catch {
     Write-Warn2 "Task Scheduler failed: $($_.Exception.Message) — Startup VBS fallback will cover it."
@@ -120,11 +118,11 @@ Start-Sleep -Seconds 3
 $agentOk = $false
 try {
     $st = Invoke-RestMethod -Uri "http://127.0.0.1:1818/status" -TimeoutSec 5
-    if ($st.online -and $st.version -eq "1.1.0") { $agentOk = $true; Write-Ok "Agent online v1.1.0" }
-    else { Write-Warn2 "Agent responded but version=$($st.version) (expected 1.1.0)" }
+    if ($st.online -and $st.version -eq "1.2.0") { $agentOk = $true; Write-Ok "Agent online v1.2.0" }
+    else { Write-Warn2 "Agent responded but version=$($st.version) (expected 1.2.0)" }
 } catch {
     Write-Warn2 "Task start didn't respond — launching hidden fallback..."
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c node `"$AgentDest\server.js`"" -WorkingDirectory $AgentDest -WindowStyle Hidden
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$AgentDest\agent.ps1`"" -WorkingDirectory $AgentDest -WindowStyle Hidden
     Start-Sleep -Seconds 4
     try {
         $st = Invoke-RestMethod -Uri "http://127.0.0.1:1818/status" -TimeoutSec 5
