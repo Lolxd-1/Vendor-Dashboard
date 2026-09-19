@@ -1,0 +1,10 @@
+{
+  "name": "quickverse-print-agent",
+  "version": "1.0.0",
+  "description": "Tiny Windows helper for QuickVerse — silent print to EPSON TM-T82 / TVSE RP3200 Lite via Windows spooler (shares queue with PetPooja).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}

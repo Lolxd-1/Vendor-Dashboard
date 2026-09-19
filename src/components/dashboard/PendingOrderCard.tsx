@@ -29,7 +29,7 @@ const { displayTime } = useOrderTimer(order.creationTime, "UP");
     handleAccept,
     handleConfirmReject,
     handleCancelReject
-  } = usePendingOrder(order.orderId);
+  } = usePendingOrder(order);
 
   return (
     <div className="bg-white dark:bg-zinc-900 border border-red-200 dark:border-red-900/50 rounded-xl p-4 shadow-sm relative hover:shadow-md transition-shadow">

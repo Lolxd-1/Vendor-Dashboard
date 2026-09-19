@@ -1,8 +1,9 @@
-import { Eye, Check, AlertCircle } from "lucide-react";
+import { Eye, Check, AlertCircle, Printer } from "lucide-react";
 import type { OrderActionEvent } from "../../types/order";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { useDashboardStore } from "../../stores/useDashboardStore";
 import { useMarkOrderReadyMutation } from "../../apis/dashboardApi";
+import { usePrintOrder } from "../../hooks/usePrintOrder";
 import toast from "react-hot-toast";
 
 interface AcceptedOrderCardProps {
@@ -19,6 +20,7 @@ export const AcceptedOrderCard = ({ order, onViewDetails }: AcceptedOrderCardPro
 
   const { moveToReady } = useDashboardStore();
   const [markReady, { isLoading }] = useMarkOrderReadyMutation();
+  const { reprint, printing } = usePrintOrder();
 
   // ─── Inline Action Handler (No extra hook needed) ───
   const handleMarkReady = async () => {
@@ -141,6 +143,24 @@ export const AcceptedOrderCard = ({ order, onViewDetails }: AcceptedOrderCardPro
       >
         <Check size={16} /> {isLoading ? "Updating..." : "Mark Ready for Pickup"}
       </button>
+
+      {/* Reprint — paper over / chit lost / USB loose */}
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={() => reprint(order, "bill")}
+          disabled={printing}
+          className="flex-1 flex justify-center items-center gap-1 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+        >
+          <Printer size={13} /> Bill
+        </button>
+        <button
+          onClick={() => reprint(order, "kot")}
+          disabled={printing}
+          className="flex-1 flex justify-center items-center gap-1 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+        >
+          <Printer size={13} /> KOT
+        </button>
+      </div>
 
     </div>
   );

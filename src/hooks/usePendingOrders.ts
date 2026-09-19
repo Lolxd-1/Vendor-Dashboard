@@ -2,8 +2,13 @@ import { useState } from "react";
 import toast from "react-hot-toast";
 import { useAcceptOrderMutation, useRejectOrderMutation } from "../apis/dashboardApi";
 import { useDashboardStore } from "../stores/useDashboardStore";
+import type { Order } from "../types/order";
+import { buildCounterBill, buildKitchenKOT } from "../utils/print/billTemplates";
+import { printText } from "../utils/print/printAgent";
 
-export const usePendingOrder = (orderId: string) => {
+export const usePendingOrder = (order: Order | string) => {
+  const orderId = typeof order === "string" ? order : order.orderId;
+  const fullOrder = typeof order === "string" ? null : order;
   // ─── Local UI States ───
   const [prepTime, setPrepTime] = useState<number>(15);
   const [showRejectForm, setShowRejectForm] = useState<boolean>(false);
@@ -21,6 +26,30 @@ export const usePendingOrder = (orderId: string) => {
       await acceptOrder({ orderId, preparationTime: prepTime }).unwrap();
       moveToAccepted(orderId, prepTime);
       toast.success(`Order ${orderId} Accepted`);
+
+      // ─── Auto-print BOTH slips in sync (Counter Bill + Kitchen KOT) ───
+      // Order object + chosen prepTime gives kitchen confusion-proof chit
+      // with Order ID + price. Idempotent per order via sessionStorage.
+      try {
+        if (fullOrder && sessionStorage.getItem(`qv_printed_${orderId}`) !== "1") {
+          const orderForPrint: Order = { ...fullOrder, preparationTime: prepTime, state: "ACCEPTED" };
+          const [billRes, kotRes] = await Promise.all([
+            printText("counter", buildCounterBill(orderForPrint, prepTime)),
+            printText("kitchen", buildKitchenKOT(orderForPrint, prepTime)),
+          ]);
+          if (billRes === "agent" && kotRes === "agent") {
+            sessionStorage.setItem(`qv_printed_${orderId}`, "1");
+            toast.success("Bill + KOT sent to printer");
+          } else if (billRes !== "failed" || kotRes !== "failed") {
+            sessionStorage.setItem(`qv_printed_${orderId}`, "1");
+            toast("Print window opened — confirm to print", { icon: "🖨️" });
+          } else {
+            toast.error("Printer not found — use Reprint on Accepted card");
+          }
+        }
+      } catch {
+        toast.error("Accepted, but auto-print failed — use Reprint");
+      }
     } catch (error) {
       toast.error(`Failed to accept order ${orderId}`);
     }

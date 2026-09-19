@@ -1,8 +1,9 @@
-import { Eye, Check } from "lucide-react";
+import { Eye, Check, Printer } from "lucide-react";
 import type { OrderActionEvent } from "../../types/order";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { useDashboardStore } from "../../stores/useDashboardStore";
 import { useHandoverOrderMutation } from "../../apis/dashboardApi";
+import { usePrintOrder } from "../../hooks/usePrintOrder";
 import toast from "react-hot-toast";
 
 interface ReadyOrderCardProps {
@@ -16,6 +17,7 @@ export const ReadyOrderCard = ({ order, onViewDetails }: ReadyOrderCardProps) =>
   const { removeOrder } = useDashboardStore();
 
   const [handover, { isLoading }] = useHandoverOrderMutation();
+  const { reprint, printing } = usePrintOrder();
 
   const isRiderArrived = order.assignedPartner?.OrderStatus === 'ARRIVED_AT_STORE' || order.assignedPartner?.orderStatus === 'ARRIVED_AT_STORE';
 
@@ -125,6 +127,13 @@ export const ReadyOrderCard = ({ order, onViewDetails }: ReadyOrderCardProps) =>
         className="w-full flex justify-center items-center gap-1.5 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-600"
       >
         <Check size={16} /> {isLoading ? "Updating..." : "Mark Handed Over"}
+      </button>
+      <button
+        onClick={() => reprint(order, "both")}
+        disabled={printing}
+        className="w-full flex justify-center items-center gap-1 py-2 mt-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+      >
+        <Printer size={13} /> {printing ? "Printing..." : "Reprint Bill + KOT"}
       </button>
 
     </div>

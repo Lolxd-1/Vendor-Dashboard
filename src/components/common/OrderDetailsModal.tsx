@@ -1,6 +1,7 @@
 import { useRef } from "react";
-import { X, Phone, User, Store, Navigation } from "lucide-react";
+import { X, Phone, User, Store, Navigation, Printer } from "lucide-react";
 import type { OrderActionEvent } from "../../types/order";
+import { usePrintOrder } from "../../hooks/usePrintOrder";
 
 interface OrderDetailsModalProps {
     order: OrderActionEvent;
@@ -73,6 +74,7 @@ const formatDateTime = (timestamp: string | number | undefined) => {
 };
 
 export const OrderDetailsModal = ({ order, onClose }: OrderDetailsModalProps) => {
+    const { reprint, printing } = usePrintOrder();
     // ─── Swipe-down-to-close (mobile bottom sheet) ───
     const touchStartY = useRef<number | null>(null);
 
@@ -145,6 +147,24 @@ export const OrderDetailsModal = ({ order, onClose }: OrderDetailsModalProps) =>
                         className="p-2 rounded-xl bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors active:scale-95"
                     >
                         <X size={18} />
+                    </button>
+                </div>
+
+                {/* ─── Print actions ─── */}
+                <div className="flex gap-2 px-5 lg:px-6 py-2 bg-white dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 shrink-0">
+                    <button
+                        onClick={() => reprint(order, "bill")}
+                        disabled={printing}
+                        className="flex-1 flex justify-center items-center gap-1 py-2 bg-slate-100 dark:bg-zinc-800 rounded-lg text-[11px] font-bold uppercase tracking-wider disabled:opacity-50"
+                    >
+                        <Printer size={13} /> Bill
+                    </button>
+                    <button
+                        onClick={() => reprint(order, "kot")}
+                        disabled={printing}
+                        className="flex-1 flex justify-center items-center gap-1 py-2 bg-slate-100 dark:bg-zinc-800 rounded-lg text-[11px] font-bold uppercase tracking-wider disabled:opacity-50"
+                    >
+                        <Printer size={13} /> KOT
                     </button>
                 </div>
 
