@@ -3,10 +3,7 @@ import toast from "react-hot-toast";
 import type { Order } from "../types/order";
 import { buildCounterBill, buildKitchenKOT } from "../utils/print/billTemplates";
 import { printTextDetailed, checkAgentOnline, type PrintOutcome } from "../utils/print/printAgent";
-
-// Idempotency: same order never double-prints on retry / re-render.
-const wasPrinted = (orderId: string) => sessionStorage.getItem(`qv_printed_${orderId}`) === "1";
-const markPrinted = (orderId: string) => sessionStorage.setItem(`qv_printed_${orderId}`, "1");
+import { wasPrinted, markPrinted, clearPrinted } from "../utils/print/printLedger";
 
 // exp2: honest toasts. "Sent to printer" is shown ONLY when the agent
 // actually accepted the job (HTTP 200). Agent refusals surface the reason
@@ -40,6 +37,7 @@ export const usePrintOrder = () => {
         toast.success("Bill + KOT sent to printer");
       } else if (billRes.where === "failed" && kotRes.where === "failed") {
         // Do NOT mark printed — staff must fix + Reprint. Show the real reason.
+        clearPrinted(order.orderId);
         const reason = billRes.error || kotRes.error || "helper unreachable";
         toast.error(`Print failed: ${reason} — use Reprint`, { duration: 6000 });
       } else {

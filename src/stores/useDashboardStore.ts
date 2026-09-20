@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Order } from '../types/order';
+import { getOrderStamp, pruneLedger, setOrderStamp } from '../utils/print/printLedger';
 
 export type OrderPhase = "PENDING" | "ACCEPTED" | "READY_FOR_PICKUP";
 
@@ -37,6 +38,9 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   // Smart-merge: preserves locally-set readyDate/acceptedDate/preparationTime
   // so timers don't reset when the API returns them as null after a poll.
   setInitialOrders: (orders) => set((state) => {
+    // Housekeeping on the normal refresh path — no timer needed.
+    pruneLedger();
+
     // Build a flat lookup of all orders currently in the store
     const allExisting = [
       ...state.pendingOrders,
@@ -49,8 +53,8 @@ export const useDashboardStore = create<DashboardState>((set) => ({
       
       // sessionStorage timestamps are the most reliable — set by the client
       // at the exact moment of moveToAccepted/moveToReady, in UTC with Z.
-      const sessionAcceptedDate = sessionStorage.getItem(`order_${incoming.orderId}_acceptedAt`);
-      const sessionReadyDate    = sessionStorage.getItem(`order_${incoming.orderId}_readyAt`);
+      const sessionAcceptedDate = getOrderStamp(incoming.orderId, "acceptedAt");
+      const sessionReadyDate    = getOrderStamp(incoming.orderId, "readyAt");
 
       return {
         ...incoming,
@@ -116,7 +120,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     if (orderIndex === -1) return state; 
     
     const now = new Date().toISOString(); // UTC with Z — reliable reference
-    sessionStorage.setItem(`order_${orderId}_acceptedAt`, now); // survives page reload
+    setOrderStamp(orderId, "acceptedAt", now); // survives page reload
 
     const order = state.pendingOrders[orderIndex];
     const acceptedOrder: Order = { 
@@ -137,7 +141,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     if (orderIndex === -1) return state; 
     
     const now = new Date().toISOString(); // UTC with Z — reliable reference
-    sessionStorage.setItem(`order_${orderId}_readyAt`, now); // survives page reload
+    setOrderStamp(orderId, "readyAt", now); // survives page reload
 
     const order = state.acceptedOrders[orderIndex];
     const readyOrder: Order = { 
