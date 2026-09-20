@@ -1,5 +1,6 @@
 import { CheckCircle, FileClock, PlayCircle, RefreshCcw, Printer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useOutletContext } from "react-router-dom";
 import { useAuthStore } from "../stores/useAuthStore";
 import { useGetVendorOrdersQuery } from "../apis/orderApi";
 import { AcceptedOrderCard } from "../components/dashboard/AcceptedOrderCard";
@@ -10,6 +11,8 @@ import { SummaryStatsRow } from "../components/dashboard/SummaryStatsRow";
 import { PrinterSettingsModal } from "../components/dashboard/PrinterSettingsModal";
 import { checkAgentOnline, getAgentQueue, getPrinterSettings } from "../utils/print/printAgent";
 import { useDashboardStats } from "../hooks/useDashboardStats";
+import { useOrderSync } from "../hooks/useOrderSync";
+import type { OrderSocketState } from "../hooks/useOrderWebsocket";
 import { useDashboardStore } from "../stores/useDashboardStore";
 import type { OrderActionEvent } from "../types/order";
 import { OrderDetailsModal } from "../components/common/OrderDetailsModal";
@@ -30,6 +33,12 @@ const Dashboard = () => {
       refetchOnMountOrArgChange: true, // ← Re-fetch on page revisit
     }
   );
+
+  // Caps how long a new order can stay invisible when the socket is not delivering. The 45s
+  // query above stays the complete truth (it is what ages completed orders out); this only
+  // accelerates the three active columns, and both feed the same `reconcile`.
+  const socket = useOutletContext<OrderSocketState>();
+  useOrderSync(shopId, socket);
 
   const [viewOrder, setViewOrder] = useState<OrderActionEvent | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("pending");

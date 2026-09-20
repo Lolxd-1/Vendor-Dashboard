@@ -21,7 +21,8 @@ declare global {
 const BASE_TITLE = "QuickVerse Vendor";
 
 const Layout = () => {
-  const isConnected = useOrderWebsocket();
+  const socket = useOrderWebsocket();
+  const { isConnected } = socket;
 
   const [ringBlocked, setRingBlocked] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -163,7 +164,7 @@ const Layout = () => {
           <Navbar onHamburgerClick={() => {}} />
           {statusStrip}
           <div className="flex-1 overflow-y-auto p-5">
-            <Outlet />
+            <Outlet context={socket} />
           </div>
         </section>
       </div>
@@ -199,7 +200,7 @@ const Layout = () => {
         {/* Mobile Scrollable Content */}
         <div className="flex-1 overflow-y-auto bg-[#F1F5F9] dark:bg-zinc-950 pb-20">
           <div>
-            <Outlet />
+            <Outlet context={socket} />
           </div>
         </div>
 

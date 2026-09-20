@@ -29,9 +29,19 @@ export const stompDebug = (str: string) => {
   }
 };
 
+// `isConnected` is not evidence that orders arrive promptly: behind the Vercel rewrite proxy the
+// STOMP client reports connected while SockJS is stuck on ~25s XHR long-polling. `lastMessageAt`
+// is the delivery evidence — consumers decide how much to trust the socket from that, not from
+// the connection flag.
+export interface OrderSocketState {
+  isConnected: boolean;
+  lastMessageAt: number | null;   // epoch ms of the last inbound order/status frame
+}
+
 // ── WebSocket Hook ───────────────────────────────────────
-export const useOrderWebsocket = () => {
+export const useOrderWebsocket = (): OrderSocketState => {
   const [isConnected, setIsConnected] = useState(false);
+  const [lastMessageAt, setLastMessageAt] = useState<number | null>(null);
   const jwt = useAuthStore((state) => state.jwt);
   const shopId = useAuthStore((state) => state.shopId);
   const clearSession = useAuthStore((state) => state.clearSession);
@@ -84,6 +94,10 @@ export const useOrderWebsocket = () => {
         if (import.meta.env.DEV) console.log("📡 Subscribing to:", topic);
 
         client.subscribe(topic, (message) => {
+          // Stamped before parsing: the frame arriving at all is the delivery evidence,
+          // whatever it turns out to carry.
+          setLastMessageAt(Date.now());
+
           try {
             const data = JSON.parse(message.body);
 
@@ -178,5 +192,5 @@ export const useOrderWebsocket = () => {
     };
   }, [jwt, shopId, addPendingOrder, upsertOrder, removeOrder, clearSession]);
 
-  return isConnected;
+  return { isConnected, lastMessageAt };
 };
