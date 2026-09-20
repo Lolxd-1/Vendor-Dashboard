@@ -30,6 +30,24 @@ const shortId = (id: string) => {
   return String(id).slice(-6);
 };
 
+// Exported from billTemplates.ts so it is unit-testable and reusable by both slips.
+export type PaymentLabel = { headline: string; collect: number | null };
+
+export const paymentLabel = (
+  order: Pick<Order, "isSettled" | "paymentMethod" | "invoiceAmount" | "totalAmount">
+): PaymentLabel => {
+  if (order.isSettled === true) {
+    return { headline: "PAID", collect: null };
+  }
+  if (order.paymentMethod && /cod|cash|on[\s-]?delivery/i.test(order.paymentMethod)) {
+    return { headline: "COD - COLLECT", collect: order.invoiceAmount ?? order.totalAmount ?? 0 };
+  }
+  if (order.paymentMethod) {
+    return { headline: `PAYMENT: ${order.paymentMethod.toUpperCase()}`, collect: null };
+  }
+  return { headline: "PAYMENT: UNCONFIRMED", collect: null };
+};
+
 // ─── 1. COUNTER MAIN BILL — full record, with prices + tax ───
 export const buildCounterBill = (order: Order, prepTime?: number): string => {
   const shop = getShop(order);
@@ -39,6 +57,7 @@ export const buildCounterBill = (order: Order, prepTime?: number): string => {
   const items = order.orderItem || [];
   const totalQty = items.reduce((a, i) => a + (i.itemCount || 0), 0);
   const subTotal = order.amountExcludingDeliveryFee ?? order.totalAmount ?? 0;
+  const payment = paymentLabel(order);
 
   L.push(center("*** QuickVerse ***"));
   L.push(center(shop.name));
@@ -46,7 +65,7 @@ export const buildCounterBill = (order: Order, prepTime?: number): string => {
   if (shop.gstin) L.push(center(`GSTIN: ${shop.gstin}`));
   if (shop.fssai) L.push(center(`FSSAI: ${shop.fssai}`));
   L.push(line());
-  L.push(row(`Order: ${order.orderId}`, "PAID"));
+  L.push(row(`Order: ${order.orderId}`, payment.headline));
   L.push(row(`Bill No.: ${billNo}`, order.fulfillmentOption || "Delivery"));
   L.push(`Date: ${dateStr}`);
   if (prepTime) L.push(`Prep Time: ${prepTime} min`);
@@ -76,6 +95,7 @@ export const buildCounterBill = (order: Order, prepTime?: number): string => {
     L.push(row("SGST 2.5% (incl)", money(sgst)));
   }
   L.push(row("Grand Total", `Rs ${money(order.invoiceAmount || subTotal)}`));
+  if (payment.collect !== null) L.push(center(`*** COLLECT Rs ${money(payment.collect)} ***`));
   L.push(`Paid via ${order.paymentMethod || "Online"}`);
   L.push(line());
   L.push(center("Tax to be paid u/s 9(5) by ECO"));
@@ -102,7 +122,9 @@ export const buildKitchenKOT = (order: Order, prepTime?: number): string => {
   L.push(line("="));
   L.push(center(`ORDER: ${order.orderId}`));
   L.push(center(`${formatDateTime(order.creationTime)}  ${order.fulfillmentOption || "Delivery"}`));
-  L.push(center(order.isSettled || order.paymentMethod ? "PAID" : "PAID"));
+  const payment = paymentLabel(order);
+  L.push(center(payment.headline));
+  if (payment.collect !== null) L.push(center(`*** COLLECT Rs ${money(payment.collect)} ***`));
   if (prepTime || order.preparationTime) L.push(center(`Prep: ${prepTime ?? order.preparationTime} min`));
   L.push(line("="));
 
