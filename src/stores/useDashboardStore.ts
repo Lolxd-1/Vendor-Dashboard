@@ -14,12 +14,33 @@ export const normalisePhase = (raw: unknown): OrderPhase | null => {
     : null;
 };
 
+// Socket-driven moves are forward-only. A stale re-broadcast (a reconnect
+// backfill, say) must never drag an already-ACCEPTED order back into Pending:
+// pendingOrders.length would rise, the ring would restart and never stop, and
+// staff could accept and print the same order twice.
+const PHASE_RANK: Record<OrderPhase, number> = {
+  PENDING: 0,
+  ACCEPTED: 1,
+  READY_FOR_PICKUP: 2,
+};
+
+// How long an order the socket delivered survives a REST poll that does not
+// list it yet, because the backend has not indexed it (replication lag,
+// read-replica delay, cache).
+export const GRACE_MS = 120_000;
+
+// Bookkeeping only, never sent to the backend: when the order entered this
+// store. Used ONLY to decide whether a locally-known order is young enough to
+// survive a server list that does not contain it.
+export type StoredOrder = Order & { __receivedAt?: number };
+
 interface DashboardState {
-  pendingOrders: Order[];
-  acceptedOrders: Order[];
-  readyOrders: Order[];
+  pendingOrders: StoredOrder[];
+  acceptedOrders: StoredOrder[];
+  readyOrders: StoredOrder[];
   
   addPendingOrder: (order: Order) => void;
+  reconcile: (serverOrders: Order[]) => void;
   setInitialOrders: (orders: Order[]) => void;
   updateOrder: (orderId: string, updates: Partial<Order>) => void;
   upsertOrder: (order: Partial<Order> & { orderId: string }, phase: OrderPhase) => void;
@@ -29,15 +50,22 @@ interface DashboardState {
   clearAll: () => void;
 }
 
-export const useDashboardStore = create<DashboardState>((set) => ({
+export const useDashboardStore = create<DashboardState>((set, get) => ({
   pendingOrders: [],
   acceptedOrders: [],
   readyOrders: [],
 
-  // 1. MANUAL REFRESH / INITIAL LOAD (REST API)
+  // 1. MANUAL REFRESH / INITIAL LOAD / 45s POLL (REST API)
+  // Reconciles with what the socket already delivered instead of replacing it:
+  // an order that arrived seconds ago may not be in the REST payload yet, and
+  // deleting it would empty pendingOrders, stop the ring, and lose the order.
   // Smart-merge: preserves locally-set readyDate/acceptedDate/preparationTime
   // so timers don't reset when the API returns them as null after a poll.
-  setInitialOrders: (orders) => set((state) => {
+  reconcile: (serverOrders) => set((state) => {
+    // A failed or malformed poll carries no information — it must never wipe
+    // the board, so treat anything that is not a list as "no news".
+    if (!Array.isArray(serverOrders)) return state;
+
     // Housekeeping on the normal refresh path — no timer needed.
     pruneLedger();
 
@@ -48,7 +76,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
       ...state.readyOrders,
     ];
 
-    const smartMerge = (incoming: Order): Order => {
+    const smartMerge = (incoming: Order): StoredOrder => {
       const existing = allExisting.find(e => e.orderId === incoming.orderId);
       
       // sessionStorage timestamps are the most reliable — set by the client
@@ -62,15 +90,40 @@ export const useDashboardStore = create<DashboardState>((set) => ({
         acceptedDate:    sessionAcceptedDate || existing?.acceptedDate    || incoming.acceptedDate,
         readyDate:       sessionReadyDate    || existing?.readyDate       || incoming.readyDate,
         preparationTime: existing?.preparationTime || incoming.preparationTime,
+        __receivedAt:    existing?.__receivedAt,
       };
     };
 
+    const serverIds = new Set(serverOrders.map(o => o.orderId));
+    const now = Date.now();
+
+    // Absent from the server list: keep it only while it is young enough that
+    // the backend has plausibly not indexed it yet. A genuine cancellation
+    // arrives over the socket as CANCELLED and removeOrder drops it at once,
+    // independent of this path, so the window cannot strand a dead order.
+    const survivesAbsence = (o: StoredOrder) =>
+      !serverIds.has(o.orderId) && now - (o.__receivedAt ?? 0) < GRACE_MS;
+
+    // Server-derived orders keep their server order, survivors are appended,
+    // so cards do not jump around between polls.
     return {
-      pendingOrders:  orders.filter(o => o.state === "PENDING").map(smartMerge),
-      acceptedOrders: orders.filter(o => o.state === "ACCEPTED").map(smartMerge),
-      readyOrders:    orders.filter(o => o.state === "READY_FOR_PICKUP").map(smartMerge),
+      pendingOrders: [
+        ...serverOrders.filter(o => o.state === "PENDING").map(smartMerge),
+        ...state.pendingOrders.filter(survivesAbsence),
+      ],
+      acceptedOrders: [
+        ...serverOrders.filter(o => o.state === "ACCEPTED").map(smartMerge),
+        ...state.acceptedOrders.filter(survivesAbsence),
+      ],
+      readyOrders: [
+        ...serverOrders.filter(o => o.state === "READY_FOR_PICKUP").map(smartMerge),
+        ...state.readyOrders.filter(survivesAbsence),
+      ],
     };
   }),
+
+  // Kept so existing callers keep working — the REST entry point is reconcile.
+  setInitialOrders: (orders) => get().reconcile(orders),
 
   // 2. WEBSOCKET INCOMING
   addPendingOrder: (order) => set((state) => {
@@ -82,7 +135,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     if (exists) return state;
     
     // Naya order hamesha PENDING me jayega
-    const newOrder: Order = { ...order, state: "PENDING" };
+    const newOrder: StoredOrder = { ...order, state: "PENDING", __receivedAt: Date.now() };
     return { pendingOrders: [...state.pendingOrders, newOrder] };
   }),
 
@@ -96,22 +149,40 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   // the column the phase names. updateOrder only merges, so it never moves.
   upsertOrder: (order, phase) => set((state) => {
     const { orderId } = order;
-    const existing =
-      state.pendingOrders.find(o => o.orderId === orderId) ??
-      state.acceptedOrders.find(o => o.orderId === orderId) ??
-      state.readyOrders.find(o => o.orderId === orderId);
+    const inPending  = state.pendingOrders.find(o => o.orderId === orderId);
+    const inAccepted = state.acceptedOrders.find(o => o.orderId === orderId);
+    const inReady    = state.readyOrders.find(o => o.orderId === orderId);
+    const existing   = inPending ?? inAccepted ?? inReady;
+
+    const currentPhase: OrderPhase | null =
+      inPending ? "PENDING" : inAccepted ? "ACCEPTED" : inReady ? "READY_FOR_PICKUP" : null;
+
+    // Forward-only for an order we already hold: ignore a move to a lower rank.
+    // Inserting a brand-new order at any phase is still allowed, and reconcile
+    // is exempt because the REST list is authoritative and must be able to
+    // correct a genuine server-side revert.
+    if (currentPhase !== null && PHASE_RANK[phase] < PHASE_RANK[currentPhase]) return state;
 
     // setInitialOrders and the columns bucket on `state`, so the phase wins.
-    const merged = { ...existing, ...order, state: phase } as Order;
+    const merged = {
+      ...existing,
+      ...order,
+      state: phase,
+      __receivedAt: existing?.__receivedAt ?? Date.now(),
+    } as StoredOrder;
 
-    const pendingOrders  = state.pendingOrders.filter(o => o.orderId !== orderId);
-    const acceptedOrders = state.acceptedOrders.filter(o => o.orderId !== orderId);
-    const readyOrders    = state.readyOrders.filter(o => o.orderId !== orderId);
+    // Already in the target column: merge in place so a repeated same-phase
+    // message does not send the card to the bottom of its column.
+    const intoTarget = (list: StoredOrder[]) =>
+      currentPhase === phase
+        ? list.map(o => (o.orderId === orderId ? merged : o))
+        : [...list, merged];
+    const without = (list: StoredOrder[]) => list.filter(o => o.orderId !== orderId);
 
     return {
-      pendingOrders:  phase === "PENDING"          ? [...pendingOrders, merged]  : pendingOrders,
-      acceptedOrders: phase === "ACCEPTED"         ? [...acceptedOrders, merged] : acceptedOrders,
-      readyOrders:    phase === "READY_FOR_PICKUP" ? [...readyOrders, merged]    : readyOrders,
+      pendingOrders:  phase === "PENDING"          ? intoTarget(state.pendingOrders)  : without(state.pendingOrders),
+      acceptedOrders: phase === "ACCEPTED"         ? intoTarget(state.acceptedOrders) : without(state.acceptedOrders),
+      readyOrders:    phase === "READY_FOR_PICKUP" ? intoTarget(state.readyOrders)    : without(state.readyOrders),
     };
   }),
 

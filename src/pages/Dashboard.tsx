@@ -18,7 +18,7 @@ type TabKey = "pending" | "accepted" | "ready";
 
 const Dashboard = () => {
   const { shopId } = useAuthStore();
-  const { pendingOrders, acceptedOrders, readyOrders, setInitialOrders } = useDashboardStore();
+  const { pendingOrders, acceptedOrders, readyOrders, reconcile } = useDashboardStore();
 
   const { isFetching, refresh } = useDashboardStats();
 
@@ -67,7 +67,7 @@ const Dashboard = () => {
   // Populate Kanban columns on initial load
   useEffect(() => {
     if (allOrders) {
-      setInitialOrders(allOrders);
+      reconcile(allOrders);
       if (!sessionStorage.getItem("vendorName")) {
         const orderWithShop = allOrders.find((o) => o.shopDetails?.name);
         if (orderWithShop?.shopDetails?.name) {
@@ -75,7 +75,7 @@ const Dashboard = () => {
         }
       }
     }
-  }, [allOrders, setInitialOrders]);
+  }, [allOrders, reconcile]);
 
   // Auto-switch to Pending tab when new pending orders arrive
   useEffect(() => {

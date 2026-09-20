@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { normalisePhase, useDashboardStore } from "../useDashboardStore";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GRACE_MS, normalisePhase, useDashboardStore } from "../useDashboardStore";
 import type { Order } from "../../types/order";
+import { setOrderStamp } from "../../utils/print/printLedger";
 
 const baseOrder: Order = {
   orderId: "QV-2026-000001",
@@ -42,6 +43,7 @@ const store = () => useDashboardStore.getState();
 
 beforeEach(() => {
   store().clearAll();
+  sessionStorage.clear(); // a stamp written by one test must not leak into the next
 });
 
 describe("normalisePhase", () => {
@@ -120,7 +122,9 @@ describe("upsertOrder", () => {
     store().upsertOrder({ orderId: "QV-1" }, "READY_FOR_PICKUP");
     expect(store().readyOrders[0].state).toBe("READY_FOR_PICKUP");
 
-    store().upsertOrder({ orderId: "QV-1" }, "PENDING");
+    // QV-1 itself can no longer go back to Pending (forward-only), so the
+    // PENDING stamp is proven on an order the store has not seen before.
+    store().upsertOrder(makeOrder("QV-2", "ACCEPTED"), "PENDING");
     expect(store().pendingOrders[0].state).toBe("PENDING");
   });
 
@@ -148,5 +152,164 @@ describe("upsertOrder", () => {
     expect(store().readyOrders).toEqual(readyBefore);
     expect(store().pendingOrders.map(o => o.orderId)).toEqual(["P2"]);
     expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["A1", "P1"]);
+  });
+});
+
+describe("reconcile", () => {
+  // The clock is fixed so "just arrived" and "aged out" are exact, not racy.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("TC1: keeps an order the socket delivered but the poll has not indexed yet", () => {
+    store().addPendingOrder(makeOrder("QV-LIVE", "PENDING"));
+
+    store().reconcile([]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-LIVE"]);
+  });
+
+  it("TC2: leaves pendingOrders.length at 1 in that case, so the ring keeps going", () => {
+    store().addPendingOrder(makeOrder("QV-LIVE", "PENDING"));
+
+    store().reconcile([]);
+
+    expect(store().pendingOrders).toHaveLength(1);
+  });
+
+  it("TC3: drops an absent order once it is older than GRACE_MS", () => {
+    store().addPendingOrder(makeOrder("QV-LIVE", "PENDING"));
+
+    vi.advanceTimersByTime(GRACE_MS + 1);
+    store().reconcile([]);
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC4: moves an order the server reports as ACCEPTED, leaving it in no other column", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "ACCEPTED")]);
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().pendingOrders).toHaveLength(0);
+    expect(store().readyOrders).toHaveLength(0);
+  });
+
+  it("TC5: does not let a null acceptedDate from the API clobber the session stamp", () => {
+    setOrderStamp("QV-1", "acceptedAt", "2026-09-20T07:00:00.000Z");
+
+    store().reconcile([{ ...makeOrder("QV-1", "ACCEPTED"), acceptedDate: null }]);
+
+    expect(store().acceptedOrders[0].acceptedDate).toBe("2026-09-20T07:00:00.000Z");
+  });
+
+  it("TC6: keeps a locally-set preparationTime when the poll returns null", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 25);
+
+    store().reconcile([{ ...makeOrder("QV-1", "ACCEPTED"), preparationTime: null as unknown as number }]);
+
+    expect(store().acceptedOrders[0].preparationTime).toBe(25);
+  });
+
+  it("TC7: an empty poll right after the orders arrived keeps all three columns", () => {
+    store().addPendingOrder(makeOrder("P1", "PENDING"));
+    store().upsertOrder(makeOrder("A1", "ACCEPTED"), "ACCEPTED");
+    store().upsertOrder(makeOrder("R1", "READY_FOR_PICKUP"), "READY_FOR_PICKUP");
+
+    store().reconcile([]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["P1"]);
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["A1"]);
+    expect(store().readyOrders.map(o => o.orderId)).toEqual(["R1"]);
+  });
+
+  it("TC8: treats a failed poll (undefined/null) as no news instead of wiping the board", () => {
+    store().addPendingOrder(makeOrder("P1", "PENDING"));
+    const before = store().pendingOrders;
+
+    expect(() => store().reconcile(undefined as unknown as Order[])).not.toThrow();
+    expect(() => store().reconcile(null as unknown as Order[])).not.toThrow();
+
+    expect(store().pendingOrders).toBe(before);
+  });
+
+  it("TC9: an order in both the store and the server list appears exactly once", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+    expect(store().readyOrders).toHaveLength(0);
+  });
+
+  it("TC10: two polls with the same server list produce the same ordering", () => {
+    store().addPendingOrder(makeOrder("LOCAL", "PENDING"));
+    const serverList = [makeOrder("S1", "PENDING"), makeOrder("S2", "PENDING")];
+
+    store().reconcile(serverList);
+    const afterFirst = store().pendingOrders.map(o => o.orderId);
+    store().reconcile(serverList);
+
+    expect(afterFirst).toEqual(["S1", "S2", "LOCAL"]);
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(afterFirst);
+  });
+
+  it("TC11: does not resurrect an order the socket cancelled", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().removeOrder("QV-1");
+
+    store().reconcile([]);
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC15: is exempt from forward-only, so the server can revert an order", () => {
+    store().upsertOrder(makeOrder("QV-1", "ACCEPTED"), "ACCEPTED");
+
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+  });
+});
+
+describe("upsertOrder is forward-only", () => {
+  it("TC12: ignores a stale PENDING re-broadcast for an order already accepted", () => {
+    store().upsertOrder(makeOrder("QV-1", "ACCEPTED"), "ACCEPTED");
+
+    store().upsertOrder(makeOrder("QV-1", "PENDING"), "PENDING");
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC13: still moves an order forward through both transitions", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().upsertOrder({ orderId: "QV-1" }, "ACCEPTED");
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+
+    store().upsertOrder({ orderId: "QV-1" }, "READY_FOR_PICKUP");
+    expect(store().readyOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+  });
+
+  it("TC14: still inserts an unknown order arriving at a later phase", () => {
+    store().upsertOrder(makeOrder("QV-NEW", "ACCEPTED"), "ACCEPTED");
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-NEW"]);
+  });
+
+  it("TC16: merges a repeated same-phase message in place instead of re-appending", () => {
+    useDashboardStore.setState({
+      acceptedOrders: [makeOrder("A1", "ACCEPTED"), makeOrder("A2", "ACCEPTED"), makeOrder("A3", "ACCEPTED")],
+    });
+
+    store().upsertOrder({ orderId: "A1", customerName: "Asha" }, "ACCEPTED");
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["A1", "A2", "A3"]);
+    expect(store().acceptedOrders[0].customerName).toBe("Asha");
   });
 });
