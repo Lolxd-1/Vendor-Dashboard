@@ -8,7 +8,7 @@ import { PendingOrderCard } from "../components/dashboard/PendingOrderCard";
 import { ReadyOrderCard } from "../components/dashboard/ReadyOrderCard";
 import { SummaryStatsRow } from "../components/dashboard/SummaryStatsRow";
 import { PrinterSettingsModal } from "../components/dashboard/PrinterSettingsModal";
-import { checkAgentOnline } from "../utils/print/printAgent";
+import { checkAgentOnline, getAgentQueue, getPrinterSettings } from "../utils/print/printAgent";
 import { useDashboardStats } from "../hooks/useDashboardStats";
 import { useDashboardStore } from "../stores/useDashboardStore";
 import type { OrderActionEvent } from "../types/order";
@@ -35,11 +35,32 @@ const Dashboard = () => {
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
   const [showPrinterSetup, setShowPrinterSetup] = useState(false);
   const [printerOnline, setPrinterOnline] = useState<boolean | null>(null);
+  // exp2: spooler truth — red dot when a SELECTED queue reports error/stuck jobs.
+  const [queueError, setQueueError] = useState<string | null>(null);
   const prevPendingCount = useRef(pendingOrders.length);
 
   useEffect(() => {
-    checkAgentOnline().then(setPrinterOnline);
-    const t = setInterval(() => checkAgentOnline().then(setPrinterOnline), 30000);
+    const check = async () => {
+      const ok = await checkAgentOnline();
+      setPrinterOnline(ok);
+      if (!ok) {
+        setQueueError(null);
+        return;
+      }
+      try {
+        const s = getPrinterSettings();
+        const selected = new Set([s.counterPrinter.trim(), s.kitchenPrinter.trim()].filter(Boolean));
+        const queues = await getAgentQueue();
+        const bad = queues.filter((q) => selected.has(q.name) && q.hasError);
+        setQueueError(
+          bad.length ? bad.map((q) => `${q.name}: ${q.errorText || q.status}${q.jobs ? ` (${q.jobs} stuck)` : ""}`).join(" · ") : null
+        );
+      } catch {
+        setQueueError(null);
+      }
+    };
+    check();
+    const t = setInterval(check, 30000);
     return () => clearInterval(t);
   }, []);
 
@@ -111,12 +132,12 @@ const Dashboard = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowPrinterSetup(true)}
-            title="Printer setup"
+            title={queueError || "Printer setup"}
             className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold tracking-wider text-slate-600 dark:text-zinc-400 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg transition-all active:scale-95"
           >
-            <span className={`w-2 h-2 rounded-full ${printerOnline ? "bg-green-500" : printerOnline === false ? "bg-red-500" : "bg-slate-300"}`} />
+            <span className={`w-2 h-2 rounded-full ${queueError ? "bg-red-500" : printerOnline ? "bg-green-500" : printerOnline === false ? "bg-red-500" : "bg-slate-300"}`} />
             <Printer size={14} />
-            Printer
+            Printer{queueError ? " !" : ""}
           </button>
           <button
             onClick={refresh}

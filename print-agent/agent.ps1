@@ -1,4 +1,4 @@
-﻿# QuickVerse Print Agent v1.3.0-exp1 - pure PowerShell, ZERO installs.
+﻿# QuickVerse Print Agent v1.3.0-exp2 - pure PowerShell, ZERO installs.
 # Runs on any Windows 10/11 out of the box. No Node, no npm, no exe.
 # Listens only on http://127.0.0.1:1818 - unreachable from network.
 # Dashboard calls: POST http://127.0.0.1:1818/print  { printer, text }
@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$AGENT_VERSION = "1.3.0-exp1"
+$AGENT_VERSION = "1.3.0-exp2"
 
 Add-Type -AssemblyName System.Drawing
 
@@ -49,6 +49,33 @@ function Get-PrinterDetail() {
         $detail += @{ name = [string]$r.Name; driver = [string]$r.DriverName; port = [string]$r.PortName; isVirtual = [bool]$v }
     }
     return $detail
+}
+
+function Get-QueueDetail() {
+    # exp2: spooler truth — PrinterStatus + stuck/error jobs per queue.
+    # Dashboard polls this to turn the Printer dot red BEFORE staff hits Reprint.
+    $rows = @()
+    try { $rows = @(Get-Printer | Select-Object Name, PrinterStatus, JobCount) } catch { $rows = @() }
+    $out = @()
+    foreach ($r in $rows) {
+        $jobs = @()
+        try { $jobs = @(Get-PrintJob -PrinterName $r.Name -ErrorAction SilentlyContinue) } catch { $jobs = @() }
+        $jobErr = ""
+        foreach ($j in $jobs) {
+            $js = [string]$j.JobStatus
+            if ($js -match 'Error|Blocked|Offline|PaperOut|NoToner|NotAvailable|UserIntervention|Paused') { $jobErr = $js; break }
+        }
+        $st = [string]$r.PrinterStatus
+        $hasErr = $false
+        $errText = ""
+        if ($st -and $st -ne 'Normal' -and $st -ne 'Idle') { $hasErr = $true; $errText = $st }
+        if ($jobErr) {
+            $hasErr = $true
+            if ($errText) { $errText = "$errText; $jobErr" } else { $errText = $jobErr }
+        }
+        $out += @{ name = [string]$r.Name; status = $st; jobs = [int]$jobs.Count; hasError = [bool]$hasErr; errorText = [string]$errText }
+    }
+    return $out
 }
 
 function Send-Text($res, $code, $text) {
@@ -123,6 +150,10 @@ while ($listener.IsListening) {
             $names = @($detail | ForEach-Object { $_.name })
             $real = @($detail | Where-Object { -not $_.isVirtual } | ForEach-Object { $_.name })
             Send-Json $res @{ printers = $names; real = $real; detail = $detail }
+        } elseif ($req.HttpMethod -eq "GET" -and $path -eq "/queue") {
+            # exp2: spooler truth for the dashboard dot + modal warnings.
+            $queues = @(Get-QueueDetail)
+            Send-Json $res @{ queues = $queues }
         } elseif ($req.HttpMethod -eq "POST" -and $path -eq "/print") {
             $reader = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
             try { $body = $reader.ReadToEnd() } finally { $reader.Close() }

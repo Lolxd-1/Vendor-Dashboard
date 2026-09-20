@@ -16,7 +16,7 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.3.0-exp1";
+export const REQUIRED_AGENT_VERSION = "1.3.0-exp2";
 
 // exp1: real vs virtual queue detection.
 // Agent v1.3 returns { printers, real, detail }. Older agents return only { printers }.
@@ -149,9 +149,15 @@ export const savePrinterSettings = (s: PrinterSettings) => {
 
 const agentUrl = (port: number) => `http://127.0.0.1:${port}/print`;
 
-// Silent path — agent writes to the named Windows printer via spooler,
-// so PetPooja jobs and ours line up one after other, never half-mixed.
-export const printViaAgent = async (printer: string, text: string): Promise<boolean> => {
+// exp2: honest errors. Agent HTTP 200 = handed to Windows spooler (not paper-out).
+// Non-200 body (e.g. "print failed: Printer not found: X") is surfaced so the
+// toast can say WHY instead of a lying "Sent to printer".
+export interface AgentPrintResult {
+  ok: boolean;
+  error?: string;
+}
+
+export const printViaAgentDetailed = async (printer: string, text: string): Promise<AgentPrintResult> => {
   const { agentPort } = getPrinterSettings();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 2500);
@@ -162,12 +168,26 @@ export const printViaAgent = async (printer: string, text: string): Promise<bool
       body: JSON.stringify({ printer, text }),
       signal: ctrl.signal,
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    let body = "";
+    try {
+      body = (await res.text()).trim().slice(0, 300);
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, error: body || `helper replied ${res.status}` };
   } catch {
-    return false;
+    return { ok: false, error: "helper unreachable — is print-agent running on THIS pc?" };
   } finally {
     clearTimeout(t);
   }
+};
+
+// Silent path — agent writes to the named Windows printer via spooler,
+// so PetPooja jobs and ours line up one after other, never half-mixed.
+export const printViaAgent = async (printer: string, text: string): Promise<boolean> => {
+  const r = await printViaAgentDetailed(printer, text);
+  return r.ok;
 };
 
 export const checkAgentOnline = async (): Promise<boolean> => {
@@ -197,12 +217,69 @@ export const printViaBrowser = (title: string, text: string) => {
   return true;
 };
 
-// Tries agent, falls back to browser. Returns where it printed.
-export const printText = async (kind: "counter" | "kitchen", text: string): Promise<"agent" | "browser" | "failed"> => {
+// Tries agent, falls back to browser. Returns where it printed + why it failed.
+// exp2: callers MUST branch on `where` — never toast success on "failed".
+export type PrintWhere = "agent" | "browser" | "failed";
+
+export interface PrintOutcome {
+  where: PrintWhere;
+  printer: string;
+  error?: string;
+}
+
+export const printTextDetailed = async (
+  kind: "counter" | "kitchen",
+  text: string
+): Promise<PrintOutcome> => {
   const s = getPrinterSettings();
   const printer = kind === "counter" ? s.counterPrinter : s.kitchenPrinter;
-  const ok = await printViaAgent(printer, text);
-  if (ok) return "agent";
+  const r = await printViaAgentDetailed(printer, text);
+  if (r.ok) return { where: "agent", printer };
+  // Agent reachable but refused (wrong queue name, spooler error) → do NOT
+  // silently fall back to browser; surface the reason so staff fixes the queue.
+  // Only fall back when the helper itself is unreachable (not installed).
+  const unreachable = /unreachable|failed to fetch|aborted|network/i.test(r.error || "");
+  if (!unreachable) return { where: "failed", printer, error: r.error };
   const opened = printViaBrowser(kind === "counter" ? "QuickVerse Bill" : "QuickVerse KOT", text);
-  return opened ? "browser" : "failed";
+  return opened ? { where: "browser", printer } : { where: "failed", printer, error: r.error };
+};
+
+export const printText = async (kind: "counter" | "kitchen", text: string): Promise<"agent" | "browser" | "failed"> => {
+  const o = await printTextDetailed(kind, text);
+  return o.where;
+};
+
+// exp2: spooler truth. Agent 1.3.0-exp2+ serves GET /queue:
+// { queues: [{ name, status, jobs, hasError, errorText }] }.
+// Older agents 404 → returns [] (callers treat as unknown, not error).
+export interface QueueInfo {
+  name: string;
+  status: string;
+  jobs: number;
+  hasError: boolean;
+  errorText?: string;
+}
+
+export const getAgentQueue = async (): Promise<QueueInfo[]> => {
+  const { agentPort } = getPrinterSettings();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(`http://127.0.0.1:${agentPort}/queue`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data?.queues)) return [];
+    return (data.queues as any[])
+      .filter((q) => typeof q?.name === "string" && q.name.trim())
+      .map((q) => ({
+        name: String(q.name),
+        status: typeof q.status === "string" ? q.status : "",
+        jobs: Number(q.jobs) || 0,
+        hasError: q.hasError === true,
+        errorText: typeof q.errorText === "string" ? q.errorText : "",
+      }));
+  } catch {
+    return [];
+  }
 };

@@ -1,6 +1,6 @@
 {
   "name": "quickverse-print-agent",
-  "version": "1.3.0-exp1",
+  "version": "1.3.0-exp2",
   "description": "Tiny Windows helper for QuickVerse — silent print to EPSON TM-T82X / TVSE RP3200 Lite via GDI monospace 42 cols (shares queue with PetPooja).",
   "main": "server.js",
   "scripts": {

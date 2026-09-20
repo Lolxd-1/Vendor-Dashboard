@@ -133,7 +133,31 @@ function listWindowsPrinters(cb) {
   });
 }
 
-const AGENT_VERSION = "1.3.0-exp1";
+const AGENT_VERSION = "1.3.0-exp2";
+
+// exp2: spooler truth (fallback path — primary detail lives in agent.ps1
+// Get-QueueDetail). Status/JobCount only; per-job JobStatus stays in ps1.
+function getQueueDetail(cb) {
+  const cmd = `powershell -NoProfile -Command "Get-Printer | Select-Object Name,PrinterStatus,JobCount | ConvertTo-Json -Compress"`;
+  exec(cmd, { timeout: 10000 }, (err, stdout) => {
+    if (err) return cb(err);
+    try {
+      let arr = JSON.parse(String(stdout || "[]"));
+      if (!Array.isArray(arr)) arr = arr ? [arr] : [];
+      const queues = arr
+        .filter((r) => r && r.Name)
+        .map((r) => {
+          const st = String(r.PrinterStatus || "");
+          const jobs = Number(r.JobCount) || 0;
+          const hasError = !!st && st !== "Normal" && st !== "Idle";
+          return { name: String(r.Name), status: st, jobs, hasError, errorText: hasError ? st : "" };
+        });
+      cb(null, queues);
+    } catch (e) {
+      cb(e);
+    }
+  });
+}
 
 const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -163,6 +187,17 @@ const server = http.createServer((req, res) => {
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ printers: result.names, real: result.real, detail: result.detail }));
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/queue") {
+    getQueueDetail((err, queues) => {
+      if (err) {
+        res.writeHead(500); return res.end("queue failed: " + err.message);
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ queues }));
     });
     return;
   }

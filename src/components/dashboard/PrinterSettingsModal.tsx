@@ -9,11 +9,13 @@ import {
   getShowAllPrinters,
   setShowAllPrinters,
   getAgentVersion,
+  getAgentQueue,
   REQUIRED_AGENT_VERSION,
   type PrinterInfo,
+  type QueueInfo,
 } from "../../utils/print/printAgent";
 import { buildCounterBill, buildKitchenKOT } from "../../utils/print/billTemplates";
-import { printText } from "../../utils/print/printAgent";
+import { printTextDetailed } from "../../utils/print/printAgent";
 import toast from "react-hot-toast";
 
 // exp1: One-time setup per shop PC. Dropdowns list REAL printers by default
@@ -31,6 +33,7 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
   const [samePrinter, setSamePrinter] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [loadingPrinters, setLoadingPrinters] = useState(false);
+  const [queues, setQueues] = useState<QueueInfo[]>([]);
 
   const allNames = detail.map((d) => d.name);
   const realNames = getRealPrinterNames(detail);
@@ -46,8 +49,9 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
       const ver = await getAgentVersion();
       setAgentVersion(ver);
       if (!ok) return;
-      const d = await getAgentPrinterDetails();
+      const [d, q] = await Promise.all([getAgentPrinterDetails(), getAgentQueue()]);
       setDetail(d);
+      setQueues(q);
       if (d.length) {
         const all = d.map((x) => x.name);
         const real = getRealPrinterNames(d);
@@ -154,15 +158,21 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
     const s = getPrinterSettings();
     const target = kind === "counter" ? counter.trim() : kitchen.trim();
     savePrinterSettings({ ...s, counterPrinter: kind === "counter" ? target : s.counterPrinter, kitchenPrinter: kind === "kitchen" ? target : s.kitchenPrinter });
-    const res = await printText(kind, text);
-    if (res === "agent") toast.success(`Test sent to ${target}`);
-    else if (res === "browser") toast("Agent not running — print window opened", { icon: "🖨️" });
-    else toast.error("Print failed");
+    // exp2: honest result — surface agent refusal reason instead of lying.
+    const res = await printTextDetailed(kind, text);
+    if (res.where === "agent") toast.success(`Test sent to ${target}`);
+    else if (res.where === "browser") toast("Agent not running — print window opened", { icon: "🖨️" });
+    else toast.error(`Test failed: ${res.error || "helper unreachable"}`, { duration: 6000 });
   };
 
   const counterTrim = counter.trim();
   const kitchenTrim = (samePrinter ? counterTrim : kitchen.trim());
   const isDual = !!counterTrim && !!kitchenTrim && counterTrim !== kitchenTrim && !samePrinter;
+  // exp2: spooler truth for the SELECTED queues (not all queues).
+  const queueByName = new Map(queues.map((q) => [q.name, q]));
+  const counterQ = counterTrim ? queueByName.get(counterTrim) : undefined;
+  const kitchenQ = !samePrinter && kitchenTrim ? queueByName.get(kitchenTrim) : undefined;
+  const queueWarnings = [counterQ, kitchenQ].filter((q) => q && q.hasError) as QueueInfo[];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-4" onClick={onClose}>
@@ -177,7 +187,15 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
         </div>
         {agentOk && agentVersion && agentVersion !== REQUIRED_AGENT_VERSION && (
           <div className="text-[11px] font-bold px-3 py-2 rounded-lg mb-3 bg-red-50 text-red-700">
-            Agent v{agentVersion} found — please update to v{REQUIRED_AGENT_VERSION} (exp1 build) before scaling.
+            Agent v{agentVersion} found — please update to v{REQUIRED_AGENT_VERSION} (exp2 build) before scaling.
+          </div>
+        )}
+        {/* exp2: spooler truth — selected queue has paper-out/offline/stuck jobs */}
+        {queueWarnings.length > 0 && (
+          <div className="text-[11px] font-bold px-3 py-2 rounded-lg mb-3 bg-red-50 text-red-700">
+            {queueWarnings.map((q) => (
+              <div key={q.name}>● {q.name}: {q.errorText || q.status}{q.jobs ? ` — ${q.jobs} job(s) stuck` : ""}. Fix paper/cable → Reprint.</div>
+            ))}
           </div>
         )}
 
