@@ -5,7 +5,13 @@ import indexHtmlSource from "../../../index.html?raw";
 import dashboardLayoutSource from "../../Layout/Dashboardlayout.tsx?raw";
 import { useAuthStore } from "../../stores/useAuthStore";
 import { useDashboardStore } from "../../stores/useDashboardStore";
-import { stompDebug, useOrderWebsocket } from "../useOrderWebsocket";
+import { FAST_MS, SLOW_MS, pickInterval } from "../useOrderSync";
+import {
+  PROMPT_MAX_MS,
+  isPromptFrame,
+  stompDebug,
+  useOrderWebsocket,
+} from "../useOrderWebsocket";
 import hookSource from "../useOrderWebsocket.tsx?raw";
 
 // A fake STOMP Client: captures the config passed to `new Client(...)` (debug/onConnect/etc.)
@@ -160,5 +166,137 @@ describe("idle-tab expiry surfaces the session-expired toast (T04 handoff)", () 
       vi.advanceTimersByTime(60000);
     });
     expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Round 1: the rate must key off PROMPT delivery, not delivery ───
+// A frame that took ~27s through the buffered Vercel long-poll is evidence the socket is
+// DEGRADED. Counting it as evidence earned the slow REST rate for the very socket that
+// caused the 30s complaint, so promptness is now a precondition for stamping lastMessageAt.
+
+describe("isPromptFrame — only a promptly-delivered frame is evidence", () => {
+  const now = 1_700_000_000_000;
+  const at = (offsetMs: number) => new Date(now + offsetMs).toISOString();
+
+  it("a frame 1s old is prompt", () => {
+    expect(isPromptFrame({ creationTime: at(-1_000) }, now)).toBe(true);
+  });
+
+  it("a frame 27s old is NOT prompt — this is the Vercel case", () => {
+    expect(isPromptFrame({ creationTime: at(-27_000) }, now)).toBe(false);
+  });
+
+  it("exactly PROMPT_MAX_MS old is NOT prompt (boundary)", () => {
+    expect(isPromptFrame({ creationTime: at(-PROMPT_MAX_MS) }, now)).toBe(false);
+  });
+
+  it("a missing creationTime is NOT prompt (fail-safe toward the fast rate)", () => {
+    expect(isPromptFrame({ orderId: "QV-1" }, now)).toBe(false);
+  });
+
+  it("an unparseable creationTime is NOT prompt", () => {
+    expect(isPromptFrame({ creationTime: "not-a-date" }, now)).toBe(false);
+  });
+
+  it("a null frame and a non-object frame are NOT prompt", () => {
+    expect(isPromptFrame(null, now)).toBe(false);
+    expect(isPromptFrame(42, now)).toBe(false);
+  });
+
+  it("2s in the future is still prompt (minor clock skew)", () => {
+    expect(isPromptFrame({ creationTime: at(2_000) }, now)).toBe(true);
+  });
+
+  it("5 minutes in the future is NOT prompt (broken clock, do not trust it)", () => {
+    expect(isPromptFrame({ creationTime: at(300_000) }, now)).toBe(false);
+  });
+});
+
+describe("lastMessageAt is stamped only by a prompt frame", () => {
+  const connectHook = () => {
+    const token = makeToken({ exp: nowSeconds() + 3600 });
+    useAuthStore.setState({ jwt: token, shopId: "SHOP-1" });
+
+    const { result } = renderHook(() => useOrderWebsocket());
+    const instance = FakeClient.instances[FakeClient.instances.length - 1];
+    act(() => {
+      instance.config.onConnect();
+    });
+    return { result, instance };
+  };
+
+  // PENDING moves the order into a column without raising a toast, so these tests
+  // exercise the stamp without asserting on unrelated notification behaviour.
+  const frame = (orderId: string, ageMs: number) => ({
+    body: JSON.stringify({
+      orderId,
+      status: "PENDING",
+      creationTime: new Date(Date.now() - ageMs).toISOString(),
+    }),
+  });
+
+  it("a frame 1s old stamps lastMessageAt", () => {
+    const { result, instance } = connectHook();
+
+    act(() => {
+      instance.messageHandler!(frame("QV-PROMPT", 1_000));
+    });
+
+    expect(result.current.lastMessageAt).not.toBeNull();
+  });
+
+  it("a frame 27s old does NOT stamp lastMessageAt", () => {
+    const { result, instance } = connectHook();
+
+    act(() => {
+      instance.messageHandler!(frame("QV-LATE", 27_000));
+    });
+
+    expect(result.current.lastMessageAt).toBeNull();
+  });
+
+  it("a malformed frame does not stamp and does not throw", () => {
+    const { result, instance } = connectHook();
+
+    act(() => {
+      instance.messageHandler!({ body: "}{ not json" });
+    });
+
+    expect(result.current.lastMessageAt).toBeNull();
+  });
+
+  it("a healthy socket still earns the slow rate — promptness is not a blanket disable", () => {
+    const { result, instance } = connectHook();
+
+    act(() => {
+      instance.messageHandler!(frame("QV-HEALTHY", 1_000));
+    });
+
+    expect(pickInterval(result.current, Date.now())).toBe(SLOW_MS);
+  });
+
+  it("THE SCENARIO: a shop fed only late frames never earns the slow rate", () => {
+    vi.useFakeTimers();
+    const { result, instance } = connectHook();
+
+    // Three orders over 90s, each delivered ~27s after it was created — the measured
+    // Vercel band. The socket is connected and genuinely delivering the whole time.
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        instance.messageHandler!(frame(`QV-LATE-${i}`, 27_000));
+      });
+
+      expect(result.current.lastMessageAt).toBeNull();
+      expect(pickInterval(result.current, Date.now())).toBe(FAST_MS);
+
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+    }
+
+    // Still fast after 90s of steady late traffic, so worst-case order latency stays
+    // bounded by FAST_MS instead of drifting back to the ~30s the vendor reported.
+    expect(pickInterval(result.current, Date.now())).toBe(FAST_MS);
+    expect(FAST_MS).toBeLessThanOrEqual(10_000);
   });
 });

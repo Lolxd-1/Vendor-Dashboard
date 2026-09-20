@@ -35,8 +35,30 @@ export const stompDebug = (str: string) => {
 // the connection flag.
 export interface OrderSocketState {
   isConnected: boolean;
-  lastMessageAt: number | null;   // epoch ms of the last inbound order/status frame
+  lastMessageAt: number | null;   // epoch ms of the last PROMPT inbound frame (see isPromptFrame)
 }
+
+// How soon after an order is created a frame must arrive to count as prompt delivery.
+export const PROMPT_MAX_MS = 5_000;
+
+// Only a frame that arrived PROMPTLY is evidence the socket is healthy. Through the buffered
+// Vercel long-poll every frame lands ~25-30s after the order was created, and counting that as
+// evidence would earn the slow REST rate for the very socket that caused the latency.
+//
+// Fail-safe direction: a frame we cannot date — no `creationTime`, unparseable, or a clock so
+// skewed the frame claims to be from well in the future — is NOT prompt, which keeps the fast
+// REST rate. Degrading toward fast costs requests; degrading toward slow brings the bug back.
+export const isPromptFrame = (data: unknown, now: number): boolean => {
+  const creationTime = (data as { creationTime?: unknown } | null | undefined)?.creationTime;
+
+  const t = Date.parse(String(creationTime));
+  if (Number.isNaN(t)) return false;
+
+  const age = now - t;
+  if (age < -60_000) return false;   // more than a minute in the future: do not trust the stamp
+
+  return age < PROMPT_MAX_MS;        // a small negative age is still fresh
+};
 
 // ── WebSocket Hook ───────────────────────────────────────
 export const useOrderWebsocket = (): OrderSocketState => {
@@ -94,12 +116,13 @@ export const useOrderWebsocket = (): OrderSocketState => {
         if (import.meta.env.DEV) console.log("📡 Subscribing to:", topic);
 
         client.subscribe(topic, (message) => {
-          // Stamped before parsing: the frame arriving at all is the delivery evidence,
-          // whatever it turns out to carry.
-          setLastMessageAt(Date.now());
-
           try {
             const data = JSON.parse(message.body);
+
+            // Stamped only for a frame that arrived promptly, so a late frame from a degraded
+            // socket never earns the slow REST rate. A frame that fails to parse never gets here.
+            const receivedAt = Date.now();
+            if (isPromptFrame(data, receivedAt)) setLastMessageAt(receivedAt);
 
             // 1. Handle Status Updates
             const currentStatus = data.status || data.state;
