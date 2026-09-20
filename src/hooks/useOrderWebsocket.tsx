@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from 'react-hot-toast';
 import SockJS from "sockjs-client";
 import { baseurl } from "../apis";
-import { useAuthStore } from "../stores/useAuthStore";
+import { isTokenExpired, useAuthStore } from "../stores/useAuthStore";
 import { normalisePhase, useDashboardStore } from "../stores/useDashboardStore";
 
 // ✅ Validator for new orders
@@ -25,18 +25,40 @@ export const useOrderWebsocket = () => {
   const [isConnected, setIsConnected] = useState(false);
   const jwt = useAuthStore((state) => state.jwt);
   const shopId = useAuthStore((state) => state.shopId);
+  const clearSession = useAuthStore((state) => state.clearSession);
 
   const addPendingOrder = useDashboardStore((state) => state.addPendingOrder);
   const upsertOrder = useDashboardStore((state) => state.upsertOrder);
   const removeOrder = useDashboardStore((state) => state.removeOrder);
 
   const clientRef = useRef<Client | null>(null);
+  const expiryToastShownRef = useRef(false);
 
   useEffect(() => {
     if (!jwt || !shopId) {
       console.log("STOMP: Missing auth, skipping");
       return;
     }
+
+    if (isTokenExpired(jwt)) {
+      clearSession();
+      return;
+    }
+
+    expiryToastShownRef.current = false;
+
+    // Shared by onStompError/onWebSocketError: only a genuinely expired token should force a
+    // logout + toast (risk R2 — a transient network blip must keep today's retry behaviour).
+    const handlePossibleExpiry = () => {
+      if (!isTokenExpired(jwt)) {
+        setIsConnected(false);
+        return;
+      }
+      if (expiryToastShownRef.current) return;
+      expiryToastShownRef.current = true;
+      clearSession();
+      toast.error("Session expired - please log in again");
+    };
 
     const client = new Client({
       webSocketFactory: () => new SockJS(baseurl + "/quickVerse/ws"), // 
@@ -117,19 +139,27 @@ export const useOrderWebsocket = () => {
 
       onStompError: (frame) => {
         console.error("❌ STOMP error:", frame);
-        setIsConnected(false);
+        handlePossibleExpiry();
       },
 
       onWebSocketError: (err) => {
         console.error("❌ WS error:", err);
-        setIsConnected(false);
+        handlePossibleExpiry();
       },
     });
 
     client.activate();
     clientRef.current = client;
 
+    // Catches a session that expires while the tab sits idle (no socket error to react to).
+    const expiryCheckInterval = setInterval(() => {
+      if (isTokenExpired(jwt)) {
+        clearSession();
+      }
+    }, 60000);
+
     return () => {
+      clearInterval(expiryCheckInterval);
       if (clientRef.current) {
         clientRef.current.deactivate();
         clientRef.current = null;
@@ -137,7 +167,7 @@ export const useOrderWebsocket = () => {
         setIsConnected(false);
       }
     };
-  }, [jwt, shopId, addPendingOrder, upsertOrder, removeOrder]);
+  }, [jwt, shopId, addPendingOrder, upsertOrder, removeOrder, clearSession]);
 
   return isConnected;
 };
