@@ -1,19 +1,19 @@
 ﻿<#
 .SYNOPSIS
-    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.2.0 (EPSON TM-T82X, no Node).
+    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.3.2 (EPSON TM-T82X, no Node).
 
 .DESCRIPTION
     One guy, 2 mins per shop, zero cost:
       1. Verifies Epson/thermal printer queue exists (warns with driver hint if not)
       2. Installs print-agent to C:\QuickVerse\print-agent (copies server.js + launchers)
       3. Registers Task Scheduler at logon (hidden, reliable) + Startup VBS fallback
-      4. Starts agent now, verifies /status v1.1.0 + /printers
+      4. Starts agent now, verifies /status v1.3.2 + /printers
       5. Reuses Install-VendorDashboard.ps1 steps: Chrome --app shortcut, autoplay policy, NoSleep
       6. Prints 42-col self-test slip + PASS/FAIL checklist
 
 .EXAMPLE
     Vercel production (HTTPS, proxy to HTTP backend - default path):
-    .\Install-QuickVerse.ps1 -SiteUrl "https://<your-app>.vercel.app/" -AddToStartup -NoSleep
+    .\Install-QuickVerse.ps1 -SiteUrl "https://vendor-dashboard-quickverse.vercel.app/" -AddToStartup -NoSleep
 
 .EXAMPLE
     HTTP interim (same-origin serve from backend host):
@@ -25,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $SiteUrl = "https://quickverse-vendor-dashboard.vercel.app/",
+    [string] $SiteUrl = "https://vendor-dashboard-quickverse.vercel.app/",
     [string] $AgentSource = "",
     [string] $AgentDest = "C:\QuickVerse\print-agent",
     [string] $ShortcutName = "QuickVerse Vendor",
@@ -37,6 +37,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ExpectedAgentVersion = "1.3.2"
 function Write-Step ($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Ok ($m) { Write-Host "    [ok]   $m" -ForegroundColor Green }
 function Write-Warn2 ($m) { Write-Host "    [warn] $m" -ForegroundColor Yellow }
@@ -44,7 +45,7 @@ function Write-Fail ($m) { Write-Host "    [fail] $m" -ForegroundColor Red }
 
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 Write-Host ""
-Write-Host "  QuickVerse Shop Setup v1.2.0 (no Node needed)" -ForegroundColor White
+Write-Host "  QuickVerse Shop Setup v$ExpectedAgentVersion (no Node needed)" -ForegroundColor White
 Write-Host "  Site: $SiteUrl"
 Write-Host "  Admin: $IsAdmin"
 
@@ -92,7 +93,7 @@ try {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$AgentDest\agent.ps1`"" -WorkingDirectory $AgentDest
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $trigger -Settings $settings -Description "QuickVerse silent 80mm print agent v1.2.0 (no Node)" -Force | Out-Null
+    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $trigger -Settings $settings -Description "QuickVerse silent 80mm print agent v$ExpectedAgentVersion (no Node)" -Force | Out-Null
     Write-Ok "Scheduled task 'QuickVerse Print Agent' registered"
 } catch {
     Write-Warn2 "Task Scheduler failed: $($_.Exception.Message) - Startup VBS fallback will cover it."
@@ -118,8 +119,11 @@ Start-Sleep -Seconds 3
 $agentOk = $false
 try {
     $st = Invoke-RestMethod -Uri "http://127.0.0.1:1818/status" -TimeoutSec 5
-    if ($st.online -and $st.version -eq "1.2.0") { $agentOk = $true; Write-Ok "Agent online v1.2.0" }
-    else { Write-Warn2 "Agent responded but version=$($st.version) (expected 1.2.0)" }
+    if ($st.online) {
+        $agentOk = $true
+        if ($st.version -eq $ExpectedAgentVersion) { Write-Ok "Agent online v$($st.version)" }
+        else { Write-Warn2 "Agent online but version=$($st.version) (expected $ExpectedAgentVersion) - continuing anyway" }
+    }
 } catch {
     Write-Warn2 "Task start didn't respond - launching hidden fallback..."
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$AgentDest\agent.ps1`"" -WorkingDirectory $AgentDest -WindowStyle Hidden
@@ -160,7 +164,11 @@ if (-not $SkipPrintTest -and $agentOk) {
          should be one line
 ------------------------------------------
 "@
-    $target = if ($printers -contains $ExpectedPrinter) { $ExpectedPrinter } else { $printers | Select-Object -First 1 }
+    $realPrinters = @()
+    if ($pl -and $pl.real) { $realPrinters = @($pl.real) }
+    $target = $null
+    if ($printers -contains $ExpectedPrinter) { $target = $ExpectedPrinter }
+    elseif ($realPrinters.Count -gt 0) { $target = $realPrinters[0] }
     if ($target) {
         try {
             $body = @{ printer = $target; text = $test } | ConvertTo-Json
