@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import type { Order } from '../types/order';
 
+export type OrderPhase = "PENDING" | "ACCEPTED" | "READY_FOR_PICKUP";
+
+// The socket sends the phase as `status`, the REST API as `state`. Anything that
+// is not one of the three columns (terminal states, junk, non-strings) is null.
+export const normalisePhase = (raw: unknown): OrderPhase | null => {
+  if (typeof raw !== "string") return null;
+  const phase = raw.trim().toUpperCase();
+  return phase === "PENDING" || phase === "ACCEPTED" || phase === "READY_FOR_PICKUP"
+    ? phase
+    : null;
+};
+
 interface DashboardState {
   pendingOrders: Order[];
   acceptedOrders: Order[];
@@ -9,6 +21,7 @@ interface DashboardState {
   addPendingOrder: (order: Order) => void;
   setInitialOrders: (orders: Order[]) => void;
   updateOrder: (orderId: string, updates: Partial<Order>) => void;
+  upsertOrder: (order: Partial<Order> & { orderId: string }, phase: OrderPhase) => void;
   moveToAccepted: (orderId: string, preparationTime: number) => void;
   moveToReady: (orderId: string) => void;
   removeOrder: (orderId: string) => void;
@@ -74,6 +87,29 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     acceptedOrders: state.acceptedOrders.map(o => o.orderId === orderId ? { ...o, ...updates } : o),
     readyOrders: state.readyOrders.map(o => o.orderId === orderId ? { ...o, ...updates } : o),
   })),
+
+  // A phase change from another device: merge the fields AND move the order into
+  // the column the phase names. updateOrder only merges, so it never moves.
+  upsertOrder: (order, phase) => set((state) => {
+    const { orderId } = order;
+    const existing =
+      state.pendingOrders.find(o => o.orderId === orderId) ??
+      state.acceptedOrders.find(o => o.orderId === orderId) ??
+      state.readyOrders.find(o => o.orderId === orderId);
+
+    // setInitialOrders and the columns bucket on `state`, so the phase wins.
+    const merged = { ...existing, ...order, state: phase } as Order;
+
+    const pendingOrders  = state.pendingOrders.filter(o => o.orderId !== orderId);
+    const acceptedOrders = state.acceptedOrders.filter(o => o.orderId !== orderId);
+    const readyOrders    = state.readyOrders.filter(o => o.orderId !== orderId);
+
+    return {
+      pendingOrders:  phase === "PENDING"          ? [...pendingOrders, merged]  : pendingOrders,
+      acceptedOrders: phase === "ACCEPTED"         ? [...acceptedOrders, merged] : acceptedOrders,
+      readyOrders:    phase === "READY_FOR_PICKUP" ? [...readyOrders, merged]    : readyOrders,
+    };
+  }),
 
   moveToAccepted: (orderId, preparationTime) => set((state) => {
     const orderIndex = state.pendingOrders.findIndex(o => o.orderId === orderId);

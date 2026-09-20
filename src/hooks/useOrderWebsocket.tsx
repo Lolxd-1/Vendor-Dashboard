@@ -5,7 +5,7 @@ import { toast } from 'react-hot-toast';
 import SockJS from "sockjs-client";
 import { baseurl } from "../apis";
 import { useAuthStore } from "../stores/useAuthStore";
-import { useDashboardStore } from "../stores/useDashboardStore";
+import { normalisePhase, useDashboardStore } from "../stores/useDashboardStore";
 
 // ✅ Validator for new orders
 const isValidOrder = (data: any): boolean => {
@@ -27,7 +27,7 @@ export const useOrderWebsocket = () => {
   const shopId = useAuthStore((state) => state.shopId);
 
   const addPendingOrder = useDashboardStore((state) => state.addPendingOrder);
-  const updateOrder = useDashboardStore((state) => state.updateOrder);
+  const upsertOrder = useDashboardStore((state) => state.upsertOrder);
   const removeOrder = useDashboardStore((state) => state.removeOrder);
 
   const clientRef = useRef<Client | null>(null);
@@ -60,33 +60,25 @@ export const useOrderWebsocket = () => {
 
             // 1. Handle Status Updates
             const currentStatus = data.status || data.state;
+            // A phase moves the order into that column on every device; null means
+            // terminal, unknown, or a brand new order (handled further down).
+            const phase = normalisePhase(data.status ?? data.state);
 
-            if (currentStatus === "ACCEPTED") {
-              // Now we keep it on screen, just update the status so the DashboardStore handles it properly
-              // Note: Usually the frontend moves it, but if another client (or this client) accepts it,
-              // we get the websocket message. We can update it in the store if it has all info.
-              // If it's just { orderId, status }, it might not have enough info to show in Accepted.
-              // For now we'll just update it if we have it. If it comes from backend as a full object, we add it.
-              if (isValidOrder(data)) {
-                // Add to accepted (will be handled by store if we manually dispatch it or we can just update it)
-                // The best way is to let the frontend logic move it on button click, 
-                // and use WS for syncing across multiple devices.
-                updateOrder(data.orderId, data);
-              } else {
-                updateOrder(data.orderId, { status: "ACCEPTED", ...data });
+            if (phase) {
+              upsertOrder(data, phase);
+
+              if (phase === "ACCEPTED") {
+                toast.success(`${data.orderId} : Order Accepted`, {
+                  icon: <CheckCircle className="text-emerald-500 w-6 h-6" />,
+                  className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(16,185,129,0.15)] dark:bg-zinc-900 dark:text-white dark:shadow-[0_4px_20px_rgba(16,185,129,0.2)]",
+                });
               }
-
-              toast.success(`${data.orderId} : Order Accepted`, {
-                icon: <CheckCircle className="text-emerald-500 w-6 h-6" />,
-                className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(16,185,129,0.15)] dark:bg-zinc-900 dark:text-white dark:shadow-[0_4px_20px_rgba(16,185,129,0.2)]",
-              });
-            }
-            else if (currentStatus === "READY_FOR_PICKUP") {
-              updateOrder(data.orderId, { status: "READY_FOR_PICKUP", ...data });
-              toast.success(`${data.orderId} : Ready for Pickup`, {
-                icon: <Info className="text-blue-500 w-6 h-6" />,
-                className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(59,130,246,0.15)] dark:bg-zinc-900 dark:text-white",
-              });
+              else if (phase === "READY_FOR_PICKUP") {
+                toast.success(`${data.orderId} : Ready for Pickup`, {
+                  icon: <Info className="text-blue-500 w-6 h-6" />,
+                  className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(59,130,246,0.15)] dark:bg-zinc-900 dark:text-white",
+                });
+              }
             }
             else if (currentStatus === "REJECTED") {
               removeOrder(data.orderId);
@@ -145,7 +137,7 @@ export const useOrderWebsocket = () => {
         setIsConnected(false);
       }
     };
-  }, [jwt, shopId, addPendingOrder, updateOrder, removeOrder]);
+  }, [jwt, shopId, addPendingOrder, upsertOrder, removeOrder]);
 
   return isConnected;
 };
