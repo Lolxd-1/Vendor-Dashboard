@@ -16,7 +16,88 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.2.0";
+export const REQUIRED_AGENT_VERSION = "1.3.0-exp1";
+
+// exp1: real vs virtual queue detection.
+// Agent v1.3 returns { printers, real, detail }. Older agents return only { printers }.
+// Client fallback uses the same blocklist so old agents still filter correctly.
+// Keep in sync with print-agent/agent.ps1 Test-IsVirtualPrinter + server.js isVirtualPrinter().
+export interface PrinterInfo {
+  name: string;
+  driver?: string;
+  port?: string;
+  isVirtual: boolean;
+}
+
+const VIRTUAL_NAME_RE =
+  /Microsoft Print to PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF|Print to File|Snagit|Snip & Sketch|XPS Document Writer/i;
+const VIRTUAL_DRIVER_RE =
+  /Microsoft Print To PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF/i;
+const VIRTUAL_PORT_RE = /^(PORTPROMPT:|SHR:|FILE:|NUL:|XpsPort:|Ne0)/i;
+
+export const isVirtualPrinter = (name: string, driver = "", port = ""): boolean => {
+  if (VIRTUAL_NAME_RE.test(name || "")) return true;
+  if (driver && VIRTUAL_DRIVER_RE.test(driver)) return true;
+  if (port && VIRTUAL_PORT_RE.test(port)) return true;
+  return false;
+};
+
+export const getShowAllPrinters = (): boolean => {
+  try {
+    return localStorage.getItem("qv_show_all_printers") === "1";
+  } catch {
+    return false;
+  }
+};
+
+export const setShowAllPrinters = (v: boolean) => {
+  try {
+    localStorage.setItem("qv_show_all_printers", v ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+};
+
+export const getAgentPrinterDetails = async (): Promise<PrinterInfo[]> => {
+  const { agentPort } = getPrinterSettings();
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`http://127.0.0.1:${agentPort}/printers`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return [];
+    const data = await res.json();
+    // Preferred: rich detail from agent v1.3+
+    if (Array.isArray(data?.detail)) {
+      return (data.detail as any[])
+        .filter((d) => typeof d?.name === "string" && d.name.trim())
+        .map((d) => ({
+          name: String(d.name),
+          driver: typeof d.driver === "string" ? d.driver : "",
+          port: typeof d.port === "string" ? d.port : "",
+          isVirtual:
+            typeof d.isVirtual === "boolean"
+              ? d.isVirtual
+              : isVirtualPrinter(String(d.name), String(d.driver || ""), String(d.port || "")),
+        }));
+    }
+    // Fallback: name-only list (agent <= 1.2) — classify client-side.
+    // Prefer `real` field if present, else classify each name.
+    const names: string[] = Array.isArray(data?.printers) ? data.printers : [];
+    const realSet = new Set(Array.isArray(data?.real) ? data.real : []);
+    return names.map((name) => ({
+      name: String(name),
+      driver: "",
+      port: "",
+      isVirtual: realSet.size ? !realSet.has(name) : isVirtualPrinter(String(name)),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+export const getRealPrinterNames = (detail: PrinterInfo[]): string[] =>
+  detail.filter((d) => !d.isVirtual).map((d) => d.name);
 
 export const getAgentPrinters = async (): Promise<string[]> => {
   const { agentPort } = getPrinterSettings();

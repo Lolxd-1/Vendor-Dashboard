@@ -97,16 +97,43 @@ function sendToWindowsPrinter(printerName, text, cb) {
   });
 }
 
+function isVirtualPrinter(name, driver, port) {
+  // exp1: keep in sync with agent.ps1 Test-IsVirtualPrinter + frontend isVirtualPrinter().
+  const n = String(name || "");
+  const d = String(driver || "");
+  const p = String(port || "");
+  if (/Microsoft Print to PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF|Print to File|Snagit|Snip & Sketch|XPS Document Writer/i.test(n)) return true;
+  if (/Microsoft Print To PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF/i.test(d)) return true;
+  if (/^(PORTPROMPT:|SHR:|FILE:|NUL:|XpsPort:|Ne0)/i.test(p)) return true;
+  return false;
+}
+
 function listWindowsPrinters(cb) {
-  const cmd = `powershell -NoProfile -Command "Get-Printer | Select-Object -ExpandProperty Name"`;
+  const cmd = `powershell -NoProfile -Command "Get-Printer | Select-Object Name,DriverName,PortName | ConvertTo-Json -Compress"`;
   exec(cmd, { timeout: 10000 }, (err, stdout) => {
     if (err) return cb(err);
-    const names = String(stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    cb(null, names);
+    try {
+      let arr = JSON.parse(String(stdout || "[]"));
+      if (!Array.isArray(arr)) arr = arr ? [arr] : [];
+      const detail = arr.map((r) => ({
+        name: String(r.Name || ""),
+        driver: String(r.DriverName || ""),
+        port: String(r.PortName || ""),
+        isVirtual: isVirtualPrinter(r.Name, r.DriverName, r.PortName),
+      })).filter((x) => x.name);
+      const names = detail.map((x) => x.name);
+      const real = detail.filter((x) => !x.isVirtual).map((x) => x.name);
+      cb(null, { names, real, detail });
+    } catch (e) {
+      // Fallback: old plain-name list if JSON parse fails
+      const names = String(stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const detail = names.map((name) => ({ name, driver: "", port: "", isVirtual: isVirtualPrinter(name, "", "") }));
+      cb(null, { names, real: detail.filter((x) => !x.isVirtual).map((x) => x.name), detail });
+    }
   });
 }
 
-const AGENT_VERSION = "1.1.0";
+const AGENT_VERSION = "1.3.0-exp1";
 
 const server = http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -130,12 +157,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/printers") {
-    listWindowsPrinters((err, names) => {
+    listWindowsPrinters((err, result) => {
       if (err) {
         res.writeHead(500); return res.end("list failed: " + err.message);
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ printers: names }));
+      return res.end(JSON.stringify({ printers: result.names, real: result.real, detail: result.detail }));
     });
     return;
   }

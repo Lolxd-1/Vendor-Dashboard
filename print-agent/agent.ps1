@@ -1,4 +1,4 @@
-﻿# QuickVerse Print Agent v1.2.0 - pure PowerShell, ZERO installs.
+﻿# QuickVerse Print Agent v1.3.0-exp1 - pure PowerShell, ZERO installs.
 # Runs on any Windows 10/11 out of the box. No Node, no npm, no exe.
 # Listens only on http://127.0.0.1:1818 - unreachable from network.
 # Dashboard calls: POST http://127.0.0.1:1818/print  { printer, text }
@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$AGENT_VERSION = "1.2.0"
+$AGENT_VERSION = "1.3.0-exp1"
 
 Add-Type -AssemblyName System.Drawing
 
@@ -21,10 +21,34 @@ function Send-Cors($res) {
 }
 
 function Send-Json($res, $obj) {
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress -Depth 4))
     $res.ContentType = "application/json"
     $res.ContentLength64 = $bytes.Length
     $res.OutputStream.Write($bytes, 0, $bytes.Length)
+}
+
+function Test-IsVirtualPrinter($name, $driver, $port) {
+    # exp1: hide virtual / file-based queues by default (PDF, XPS, OneNote, Fax).
+    # Everything else (USB, WSD, TCP/IP, EPSON/TVSE/STAR, HP/Canon/Brother) = real.
+    # Keep dashboard fallback in sync: src/utils/print/printAgent.ts isVirtualPrinter().
+    $n = "$name"
+    $d = "$driver"
+    $p = "$port"
+    if ($n -match 'Microsoft Print to PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF|Print to File|Snagit|Snip & Sketch|XPS Document Writer') { return $true }
+    if ($d -match 'Microsoft Print To PDF|Microsoft XPS|OneNote|Fax|Adobe PDF|CutePDF|PDFCreator|Bullzip|PrimoPDF') { return $true }
+    if ($p -match '^(PORTPROMPT:|SHR:|FILE:|NUL:|XpsPort:|Ne0)') { return $true }
+    return $false
+}
+
+function Get-PrinterDetail() {
+    $rows = @()
+    try { $rows = @(Get-Printer | Select-Object Name, DriverName, PortName) } catch { $rows = @() }
+    $detail = @()
+    foreach ($r in $rows) {
+        $v = Test-IsVirtualPrinter $r.Name $r.DriverName $r.PortName
+        $detail += @{ name = [string]$r.Name; driver = [string]$r.DriverName; port = [string]$r.PortName; isVirtual = [bool]$v }
+    }
+    return $detail
 }
 
 function Send-Text($res, $code, $text) {
@@ -93,8 +117,12 @@ while ($listener.IsListening) {
         } elseif ($req.HttpMethod -eq "GET" -and $path -eq "/version") {
             Send-Json $res @{ version = $AGENT_VERSION }
         } elseif ($req.HttpMethod -eq "GET" -and $path -eq "/printers") {
-            $names = @(Get-Printer | Select-Object -ExpandProperty Name)
-            Send-Json $res @{ printers = $names }
+            # exp1: printers = ALL names (backward compat), real = filtered, detail = per-queue meta.
+            # Dashboard hides virtual by default, shows all when "Show all printers" is ticked.
+            $detail = @(Get-PrinterDetail)
+            $names = @($detail | ForEach-Object { $_.name })
+            $real = @($detail | Where-Object { -not $_.isVirtual } | ForEach-Object { $_.name })
+            Send-Json $res @{ printers = $names; real = $real; detail = $detail }
         } elseif ($req.HttpMethod -eq "POST" -and $path -eq "/print") {
             $reader = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
             try { $body = $reader.ReadToEnd() } finally { $reader.Close() }
