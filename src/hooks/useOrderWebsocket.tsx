@@ -20,6 +20,15 @@ const isValidOrder = (data: any): boolean => {
   return hasItems;
 };
 
+// Raw STOMP frames include the CONNECT frame's `Authorization: Bearer <jwt>` header, so this
+// must never run in a production build. import.meta.env.DEV is inlined at build time, so the
+// branch (and the console.log call inside it) is dead code that gets dropped from the bundle.
+export const stompDebug = (str: string) => {
+  if (import.meta.env.DEV) {
+    console.log("STOMP:", str);
+  }
+};
+
 // ── WebSocket Hook ───────────────────────────────────────
 export const useOrderWebsocket = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -36,7 +45,7 @@ export const useOrderWebsocket = () => {
 
   useEffect(() => {
     if (!jwt || !shopId) {
-      console.log("STOMP: Missing auth, skipping");
+      if (import.meta.env.DEV) console.log("STOMP: Missing auth, skipping");
       return;
     }
 
@@ -62,29 +71,27 @@ export const useOrderWebsocket = () => {
 
     const client = new Client({
       webSocketFactory: () => new SockJS(baseurl + "/quickVerse/ws"), // 
-      debug: (str) => console.log("STOMP:", str),
+      debug: stompDebug,
       reconnectDelay: 5000,
       connectHeaders: {
         Authorization: `Bearer ${jwt}`,
       },
       onConnect: () => {
         setIsConnected(true);
-        console.log("✅ Connected to STOMP");
+        if (import.meta.env.DEV) console.log("✅ Connected to STOMP");
 
         const topic = `/topic/vendor/${shopId}`;
-        console.log("📡 Subscribing to:", topic);
+        if (import.meta.env.DEV) console.log("📡 Subscribing to:", topic);
 
         client.subscribe(topic, (message) => {
-          console.log("RAW message Received:", message.body);
           try {
             const data = JSON.parse(message.body);
-            console.log("🔔 WebSocket Message received:", data);
 
             // 1. Handle Status Updates
             const currentStatus = data.status || data.state;
             // A phase moves the order into that column on every device; null means
             // terminal, unknown, or a brand new order (handled further down).
-            const phase = normalisePhase(data.status ?? data.state);
+            const phase = normalisePhase(data.status || data.state);
 
             if (phase) {
               upsertOrder(data, phase);
@@ -153,9 +160,11 @@ export const useOrderWebsocket = () => {
 
     // Catches a session that expires while the tab sits idle (no socket error to react to).
     const expiryCheckInterval = setInterval(() => {
-      if (isTokenExpired(jwt)) {
-        clearSession();
-      }
+      if (!isTokenExpired(jwt)) return;
+      if (expiryToastShownRef.current) return;
+      expiryToastShownRef.current = true;
+      clearSession();
+      toast.error("Session expired - please log in again");
     }, 60000);
 
     return () => {
@@ -163,7 +172,7 @@ export const useOrderWebsocket = () => {
       if (clientRef.current) {
         clientRef.current.deactivate();
         clientRef.current = null;
-        console.log("❌ WebSocket Disconnected");
+        if (import.meta.env.DEV) console.log("❌ WebSocket Disconnected");
         setIsConnected(false);
       }
     };

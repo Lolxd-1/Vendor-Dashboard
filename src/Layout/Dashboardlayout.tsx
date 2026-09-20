@@ -18,7 +18,7 @@ declare global {
   }
 }
 
-const BASE_TITLE = "vendors-dashborad";
+const BASE_TITLE = "QuickVerse Vendor";
 
 const Layout = () => {
   const isConnected = useOrderWebsocket();
