@@ -133,7 +133,7 @@ function listWindowsPrinters(cb) {
   });
 }
 
-const AGENT_VERSION = "1.3.0-exp2";
+const AGENT_VERSION = "1.3.1-exp3";
 
 // exp2: spooler truth (fallback path — primary detail lives in agent.ps1
 // Get-QueueDetail). Status/JobCount only; per-job JobStatus stays in ps1.
@@ -228,6 +228,36 @@ const server = http.createServer((req, res) => {
   res.writeHead(404); res.end("not found");
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`QuickVerse print agent on http://127.0.0.1:${PORT} — printers share queue with PetPooja.`);
+server.on("error", (e) => {
+  // exp3: same single-instance story as agent.ps1 — friendly, not red.
+  if (e && e.code === "EADDRINUSE") {
+    console.log(`QuickVerse print agent: Already running on http://127.0.0.1:${PORT} - close this window, helper is up. Verify: http://127.0.0.1:${PORT}/status`);
+    process.exit(2);
+  }
+  throw e;
 });
+
+// exp3: pre-probe before binding — catches ANY holder (ps1, Node, old
+// version) so the 2nd launch exits friendly instead of EADDRINUSE crash.
+function startIfFree() {
+  const req = http.get({ host: "127.0.0.1", port: PORT, path: "/status", timeout: 2000 }, (res) => {
+    let b = "";
+    res.on("data", (c) => (b += c));
+    res.on("end", () => {
+      let ver = "";
+      try { ver = JSON.parse(b).version || ""; } catch {}
+      console.log(`QuickVerse print agent: Already running${ver ? ` (v${ver})` : ""} on http://127.0.0.1:${PORT} - close this window, helper is up.`);
+      process.exit(2);
+    });
+  });
+  req.on("timeout", () => { req.destroy(); listenNow(); });
+  req.on("error", () => listenNow());
+}
+
+function listenNow() {
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`QuickVerse print agent on http://127.0.0.1:${PORT} — printers share queue with PetPooja.`);
+  });
+}
+
+startIfFree();

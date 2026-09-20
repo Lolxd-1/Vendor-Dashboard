@@ -187,7 +187,7 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
         </div>
         {agentOk && agentVersion && agentVersion !== REQUIRED_AGENT_VERSION && (
           <div className="text-[11px] font-bold px-3 py-2 rounded-lg mb-3 bg-red-50 text-red-700">
-            Agent v{agentVersion} found — please update to v{REQUIRED_AGENT_VERSION} (exp2 build) before scaling.
+            Agent v{agentVersion} found — please update to v{REQUIRED_AGENT_VERSION} (exp3 build) before scaling.
           </div>
         )}
         {/* exp2: spooler truth — selected queue has paper-out/offline/stuck jobs */}
