@@ -112,15 +112,22 @@ function Invoke-Agent($method, $path, $body, $timeoutSec) {
         }
         return @{ code = [int]$r.StatusCode; text = [string]$r.Content }
     } catch [System.Net.WebException] {
+        # Windows PowerShell 5.1 hands the error-response body to
+        # ErrorDetails.Message and leaves the response stream already consumed,
+        # so reading the stream first yields "". Take ErrorDetails, then fall
+        # back to the stream for any case that does not populate it.
+        $txt = ""
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $txt = [string]$_.ErrorDetails.Message }
         $resp = $_.Exception.Response
         if ($resp) {
             $code = [int]$resp.StatusCode
-            $txt = ""
-            try {
-                $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())
-                $txt = $sr.ReadToEnd()
-                $sr.Close()
-            } catch { }
+            if (-not $txt) {
+                try {
+                    $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())
+                    $txt = $sr.ReadToEnd()
+                    $sr.Close()
+                } catch { }
+            }
             return @{ code = $code; text = $txt }
         }
         return @{ code = 0; text = $_.Exception.Message }
@@ -131,7 +138,9 @@ function Invoke-Agent($method, $path, $body, $timeoutSec) {
 
 function Test-PortFree($p) {
     $c = New-Object System.Net.Sockets.TcpClient
-    try { $c.Connect("127.0.0.1", $p); $c.Close(); return $false } catch { return $true }
+    try { $c.Connect("127.0.0.1", $p); return $false }
+    catch { return $true }
+    finally { $c.Dispose() }
 }
 
 function Get-StatusCode($responseText) {
@@ -178,9 +187,15 @@ try {
         $names = $prObj.PSObject.Properties.Name
         $hasKeys = ($names -contains "printers") -and ($names -contains "real") -and ($names -contains "detail")
         Assert-That "TC3 happy: /printers has printers, real and detail keys" $hasKeys ("got keys: " + ($names -join ','))
-        $detailOk = $true
+        # An empty detail array must FAIL, not pass by checking nothing: a
+        # stopped spooler makes Get-PrinterDetail swallow the error and answer
+        # {"detail":[]}, which would otherwise report green having verified
+        # nothing. Windows 10/11 always ships at least "Microsoft Print to PDF".
+        $detailEntries = @($prObj.detail)
+        Assert-That "TC3 happy: /printers detail is non-empty (else the shape check proves nothing)" ($detailEntries.Count -gt 0) "detail was empty - spooler stopped or no queues installed"
+        $detailOk = ($detailEntries.Count -gt 0)
         $bad = ""
-        foreach ($d in @($prObj.detail)) {
+        foreach ($d in $detailEntries) {
             $dn = $d.PSObject.Properties.Name
             if (-not (($dn -contains "name") -and ($dn -contains "driver") -and ($dn -contains "port") -and ($dn -contains "isVirtual"))) {
                 $detailOk = $false
@@ -202,6 +217,41 @@ try {
 
         $bad2 = Invoke-Agent "POST" "/print" '{"printer":"x"}' 10
         Assert-That "TC6 error: POST /print without text returns 400" ($bad2.code -eq 400) ("got " + $bad2.code + " " + $bad2.text)
+
+        # --- TC12 - a nonexistent queue must travel end-to-end through
+        # --- Print-Text and come back as 500 naming that queue verbatim,
+        # --- brackets and all. Step 4 requires that not-found path preserved.
+        $missing = "QuickVerse [Missing] Queue"
+        $missBody = ConvertTo-Json @{ printer = $missing; text = "probe" } -Compress
+        $miss = Invoke-Agent "POST" "/print" $missBody 20
+        Assert-That "TC12 routing: POST /print to a bracket-named nonexistent queue returns 500" ($miss.code -eq 500) ("got " + $miss.code + " " + $miss.text)
+        Assert-That "TC12 routing: the 500 body names that queue verbatim" (([string]$miss.text).Contains("Printer not found: " + $missing)) ("got body: " + $miss.text)
+
+        # --- TC13 - regression guard for the wildcard-lookup bug. Build a name
+        # --- that is NO queue's literal name but WOULD match a real one if the
+        # --- lookup treated it as a pattern (Get-Printer -Name, or -eq typo'd
+        # --- to -like). Correct code compares literally, so it must report the
+        # --- probe as not found and must never reach a real printer.
+        $allNames = @($prObj.printers)
+        $realName = $null
+        foreach ($nm in $allNames) {
+            $s = [string]$nm
+            if ($s.Length -ge 2 -and $s.Substring($s.Length - 1, 1) -match '^[A-Za-z0-9]$') { $realName = $s; break }
+        }
+        if (-not $realName) {
+            Assert-That "TC13 routing: an installed queue was available to build the wildcard probe from" $false "no installed queue ends in an alphanumeric character"
+        } else {
+            $tail = $realName.Substring($realName.Length - 1, 1)
+            $probe = $realName.Substring(0, $realName.Length - 1) + "[" + $tail + "]"
+            $literalHits = @($allNames | Where-Object { [string]$_ -eq $probe }).Count
+            $wildHits = @($allNames | Where-Object { [string]$_ -like $probe }).Count
+            # If the probe did not discriminate, this test would be worthless.
+            Assert-That ("TC13 routing: probe '" + $probe + "' discriminates (0 literal, " + $wildHits + " wildcard match)") (($literalHits -eq 0) -and ($wildHits -ge 1)) ("literal=" + $literalHits + " wildcard=" + $wildHits)
+            $wildBody = ConvertTo-Json @{ printer = $probe; text = "probe" } -Compress
+            $wild = Invoke-Agent "POST" "/print" $wildBody 20
+            $namedExactly = ([string]$wild.text).Contains("Printer not found: " + $probe)
+            Assert-That "TC13 routing: a wildcard-shaped queue name is matched literally, never as a pattern" (($wild.code -eq 500) -and $namedExactly) ("got " + $wild.code + " " + $wild.text)
+        }
 
         # --- TC7 - THE CRITICAL ONE. A client that announces a body and then
         # --- sends nothing must not wedge the single-threaded loop.
