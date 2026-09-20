@@ -10,6 +10,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $AGENT_VERSION = "1.3.2"
 
+# T09: dashboard-only CORS. If the dashboard is ever served from a new
+# domain, this is the single place to update.
+$ALLOWED_ORIGINS = @(
+    "https://vendor-dashboard-quickverse.vercel.app",
+    "http://prd.quickverse.in",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173"
+)
+
 # exp3: single-instance guard — ONE holder of 127.0.0.1:1818 per PC.
 # Double-clicks (visible .bat + hidden Startup .vbs + Scheduler) used to fight
 # over the http.sys prefix and die with a scary HttpListenerException, then
@@ -27,7 +36,7 @@ try {
     }
 } catch { <# nothing listening — safe to start #> }
 try {
-    $script:AgentMutex = New-Object System.Threading.Mutex($false, "Global\QuickVersePrintAgent1818")
+    $script:AgentMutex = New-Object System.Threading.Mutex($false, "Global\QuickVersePrintAgent$Port")
     if (-not $script:AgentMutex.WaitOne(0, $false)) {
         Write-Output "QuickVerse print agent: Already running on http://127.0.0.1:$Port - close this window, helper is up. Verify: http://127.0.0.1:$Port/status"
         exit 2
@@ -59,12 +68,21 @@ try {
 
 Add-Type -AssemblyName System.Drawing
 
-function Send-Cors($res) {
-    $res.Headers.Add("Access-Control-Allow-Origin", "*")
-    $res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-    $res.Headers.Add("Access-Control-Allow-Headers", "Content-Type")
-    # PNA: lets a future HTTPS dashboard talk to this HTTP loopback agent.
-    $res.Headers.Add("Access-Control-Allow-Private-Network", "true")
+function Send-Cors($req, $res) {
+    # T09: origin-locked CORS. No Origin header means a non-browser caller
+    # (installer, curl, Invoke-RestMethod) - CORS is a browser-only
+    # mechanism, so serve the request normally with no CORS headers at all.
+    $origin = $req.Headers["Origin"]
+    if (-not $origin) { return }
+    if ($ALLOWED_ORIGINS -contains $origin) {
+        $res.Headers.Add("Access-Control-Allow-Origin", $origin)
+        $res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        $res.Headers.Add("Access-Control-Allow-Headers", "Content-Type")
+        # PNA: lets the HTTPS dashboard talk to this HTTP loopback agent.
+        $res.Headers.Add("Access-Control-Allow-Private-Network", "true")
+    } else {
+        Write-AgentLog "CORS-DENY $origin"
+    }
 }
 
 function Send-Json($res, $obj) {
@@ -87,9 +105,48 @@ function Test-IsVirtualPrinter($name, $driver, $port) {
     return $false
 }
 
+# T09 step 7: Get-Printer / Get-PrintJob talk to the Windows spooler, and a
+# wedged spooler is a common real-world failure. /printers and /queue are the
+# dashboard's most-polled routes (every 30s), so both cmdlets run through a
+# dedicated runspace with a hard time limit instead of directly on the
+# request thread. The runspace is reused across calls so the common case
+# (spooler healthy) pays the PrintManagement module's import cost once, not
+# on every poll. A timeout abandons that runspace - it may still be blocked
+# inside the stuck native call, so closing it could itself block - and the
+# next call opens a fresh one.
+$script:PrinterCallTimeoutMs = 3000
+$script:PrinterRunspace = $null
+
+function Get-PrinterRunspace() {
+    if (-not $script:PrinterRunspace -or $script:PrinterRunspace.RunspaceStateInfo.State -ne 'Opened') {
+        $script:PrinterRunspace = [runspacefactory]::CreateRunspace()
+        $script:PrinterRunspace.Open()
+    }
+    return $script:PrinterRunspace
+}
+
+function Invoke-BoundedSpooler([scriptblock] $Script, [string] $Label, [object[]] $ArgumentList) {
+    $ps = [powershell]::Create()
+    $ps.Runspace = Get-PrinterRunspace
+    try {
+        [void]$ps.AddScript($Script)
+        if ($ArgumentList) { foreach ($a in $ArgumentList) { [void]$ps.AddArgument($a) } }
+        $async = $ps.BeginInvoke()
+        if ($async.AsyncWaitHandle.WaitOne($script:PrinterCallTimeoutMs)) {
+            return $ps.EndInvoke($async)
+        }
+        Write-AgentLog "TIMEOUT: $Label exceeded $($script:PrinterCallTimeoutMs)ms"
+        try { $ps.Stop() } catch { }
+        $script:PrinterRunspace = $null
+        return @()
+    } finally {
+        try { $ps.Dispose() } catch { }
+    }
+}
+
 function Get-PrinterDetail() {
     $rows = @()
-    try { $rows = @(Get-Printer | Select-Object Name, DriverName, PortName) } catch { $rows = @() }
+    try { $rows = @(Invoke-BoundedSpooler { Get-Printer | Select-Object Name, DriverName, PortName } "Get-Printer") } catch { $rows = @() }
     $detail = @()
     foreach ($r in $rows) {
         $v = Test-IsVirtualPrinter $r.Name $r.DriverName $r.PortName
@@ -102,11 +159,11 @@ function Get-QueueDetail() {
     # exp2: spooler truth — PrinterStatus + stuck/error jobs per queue.
     # Dashboard polls this to turn the Printer dot red BEFORE staff hits Reprint.
     $rows = @()
-    try { $rows = @(Get-Printer | Select-Object Name, PrinterStatus, JobCount) } catch { $rows = @() }
+    try { $rows = @(Invoke-BoundedSpooler { Get-Printer | Select-Object Name, PrinterStatus, JobCount } "Get-Printer") } catch { $rows = @() }
     $out = @()
     foreach ($r in $rows) {
         $jobs = @()
-        try { $jobs = @(Get-PrintJob -PrinterName $r.Name -ErrorAction SilentlyContinue) } catch { $jobs = @() }
+        try { $jobs = @(Invoke-BoundedSpooler { param($n) Get-PrintJob -PrinterName $n -ErrorAction SilentlyContinue } "Get-PrintJob" @($r.Name)) } catch { $jobs = @() }
         $jobErr = ""
         foreach ($j in $jobs) {
             $js = [string]$j.JobStatus
@@ -246,7 +303,7 @@ while ($listener.IsListening) {
     $req = $ctx.Request
     $res = $ctx.Response
     try {
-        Send-Cors $res
+        Send-Cors $req $res
         $path = $req.Url.AbsolutePath
         if ($req.HttpMethod -eq "OPTIONS") {
             $res.StatusCode = 204

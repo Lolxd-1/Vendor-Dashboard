@@ -102,15 +102,18 @@ if ($haveVirtual) {
 }
 
 # --- HTTP helpers -----------------------------------------------------------
-function Invoke-Agent($method, $path, $body, $timeoutSec) {
-    $url = "http://127.0.0.1:$Port$path"
+function Invoke-Agent($method, $path, $body, $timeoutSec, $targetPort, $extraHeaders) {
+    # NOTE: PowerShell variable names are case-insensitive, so a parameter
+    # literally named $port would shadow the script-scope $Port on every call
+    # site below - hence $targetPort here instead.
+    if (-not $targetPort) { $targetPort = $Port }
+    $url = "http://127.0.0.1:$targetPort$path"
     try {
-        if ($null -ne $body) {
-            $r = Invoke-WebRequest -Uri $url -Method $method -Body $body -ContentType "application/json" -UseBasicParsing -TimeoutSec $timeoutSec
-        } else {
-            $r = Invoke-WebRequest -Uri $url -Method $method -UseBasicParsing -TimeoutSec $timeoutSec
-        }
-        return @{ code = [int]$r.StatusCode; text = [string]$r.Content }
+        $params = @{ Uri = $url; Method = $method; UseBasicParsing = $true; TimeoutSec = $timeoutSec }
+        if ($null -ne $body) { $params.Body = $body; $params.ContentType = "application/json" }
+        if ($extraHeaders) { $params.Headers = $extraHeaders }
+        $r = Invoke-WebRequest @params
+        return @{ code = [int]$r.StatusCode; text = [string]$r.Content; headers = $r.Headers }
     } catch [System.Net.WebException] {
         # Windows PowerShell 5.1 hands the error-response body to
         # ErrorDetails.Message and leaves the response stream already consumed,
@@ -128,11 +131,11 @@ function Invoke-Agent($method, $path, $body, $timeoutSec) {
                     $sr.Close()
                 } catch { }
             }
-            return @{ code = $code; text = $txt }
+            return @{ code = $code; text = $txt; headers = $resp.Headers }
         }
-        return @{ code = 0; text = $_.Exception.Message }
+        return @{ code = 0; text = $_.Exception.Message; headers = $null }
     } catch {
-        return @{ code = 0; text = $_.Exception.Message }
+        return @{ code = 0; text = $_.Exception.Message; headers = $null }
     }
 }
 
@@ -304,6 +307,69 @@ try {
 
         $after = Invoke-Agent "GET" "/status" $null 20
         Assert-That "TC8 limit: agent still answers /status after the oversized body" ($after.code -eq 200) ("got " + $after.code + " " + $after.text)
+
+        # --- T09 CORS allowlist. Origin locking must never affect a
+        # --- non-browser caller (no Origin header at all), must never emit a
+        # --- wildcard, and must match the allowlist literally - never by
+        # --- substring or pattern.
+        $allowedOrigin = "https://vendor-dashboard-quickverse.vercel.app"
+        $deniedOrigin = "https://evil.example.com"
+        $lookalikeOrigin = "https://evil-vendor-dashboard-quickverse.vercel.app.attacker.com"
+        $localhostOrigin = "http://localhost:5173"
+
+        $corsNoOrigin = Invoke-Agent "GET" "/status" $null 10
+        Assert-That "CORS-TC1 installer: GET /status with no Origin header returns 200 (served normally)" ($corsNoOrigin.code -eq 200) ("got " + $corsNoOrigin.code)
+
+        $corsAllowed = Invoke-Agent "GET" "/status" $null 10 $null @{ Origin = $allowedOrigin }
+        Assert-That "CORS-TC2 allowed: GET /status with an allowed Origin returns 200" ($corsAllowed.code -eq 200) ("got " + $corsAllowed.code)
+        Assert-That "CORS-TC2 allowed: Access-Control-Allow-Origin exactly echoes the allowed origin" ([string]$corsAllowed.headers["Access-Control-Allow-Origin"] -eq $allowedOrigin) ("got [" + $corsAllowed.headers["Access-Control-Allow-Origin"] + "]")
+        Assert-That "CORS-TC3 PNA: the allowed response also carries Access-Control-Allow-Private-Network: true" ([string]$corsAllowed.headers["Access-Control-Allow-Private-Network"] -eq "true") ("got [" + $corsAllowed.headers["Access-Control-Allow-Private-Network"] + "]")
+
+        $corsDenied = Invoke-Agent "GET" "/status" $null 10 $null @{ Origin = $deniedOrigin }
+        Assert-That "CORS-TC4 denied: GET /status with a disallowed Origin returns no Access-Control-Allow-Origin header" ($null -eq $corsDenied.headers["Access-Control-Allow-Origin"]) ("got [" + $corsDenied.headers["Access-Control-Allow-Origin"] + "]")
+
+        $corsLookalike = Invoke-Agent "GET" "/status" $null 10 $null @{ Origin = $lookalikeOrigin }
+        Assert-That "CORS-TC6 no-substring: an origin containing an allowed origin as a substring is denied" ($null -eq $corsLookalike.headers["Access-Control-Allow-Origin"]) ("got [" + $corsLookalike.headers["Access-Control-Allow-Origin"] + "]")
+
+        $corsLocalhost = Invoke-Agent "GET" "/status" $null 10 $null @{ Origin = $localhostOrigin }
+        Assert-That "CORS-TC8 localhost: GET /status with Origin http://localhost:5173 is allowed" ([string]$corsLocalhost.headers["Access-Control-Allow-Origin"] -eq $localhostOrigin) ("got [" + $corsLocalhost.headers["Access-Control-Allow-Origin"] + "]")
+
+        $corsPreflight = Invoke-Agent "OPTIONS" "/print" $null 10 $null @{ Origin = $allowedOrigin }
+        Assert-That "CORS-TC7 preflight: OPTIONS /print with an allowed Origin returns 204" ($corsPreflight.code -eq 204) ("got " + $corsPreflight.code)
+        Assert-That "CORS-TC7 preflight: OPTIONS /print echoes the allowed origin" ([string]$corsPreflight.headers["Access-Control-Allow-Origin"] -eq $allowedOrigin) ("got [" + $corsPreflight.headers["Access-Control-Allow-Origin"] + "]")
+
+        $corsNoWildcard = $true
+        $corsWildcardDetail = ""
+        $corsChecked = @(
+            @{ label = "no-origin"; resp = $corsNoOrigin },
+            @{ label = "allowed"; resp = $corsAllowed },
+            @{ label = "denied"; resp = $corsDenied },
+            @{ label = "lookalike"; resp = $corsLookalike },
+            @{ label = "localhost"; resp = $corsLocalhost },
+            @{ label = "preflight"; resp = $corsPreflight }
+        )
+        foreach ($entry in $corsChecked) {
+            if ($entry.resp.headers -and ([string]$entry.resp.headers["Access-Control-Allow-Origin"] -eq "*")) {
+                $corsNoWildcard = $false
+                $corsWildcardDetail = $entry.label
+            }
+        }
+        Assert-That "CORS-TC5 no-wildcard: Access-Control-Allow-Origin is never '*' on any of the above responses" $corsNoWildcard ("wildcard found on: " + $corsWildcardDetail)
+        # CORS-TC9 (regression) is every pre-existing assertion in this file still passing.
+
+        # --- T09 step 7 - bounded spooler calls. Cannot fault-inject a wedged
+        # --- spooler from here, but this proves the bounded call path answers
+        # --- well within budget when the spooler is healthy.
+        $boundMaxSeconds = 10
+        $swPrinters = [System.Diagnostics.Stopwatch]::StartNew()
+        $printersBounded = Invoke-Agent "GET" "/printers" $null 20
+        $swPrinters.Stop()
+        Assert-That ("TIMEOUT-TC1: GET /printers answers within " + $boundMaxSeconds + "s (" + [int]$swPrinters.Elapsed.TotalSeconds + "s)") (($printersBounded.code -eq 200) -and ($swPrinters.Elapsed.TotalSeconds -lt $boundMaxSeconds)) ("code=" + $printersBounded.code + " elapsed=" + $swPrinters.Elapsed.TotalSeconds)
+
+        $swQueue = [System.Diagnostics.Stopwatch]::StartNew()
+        $queueBounded = Invoke-Agent "GET" "/queue" $null 20
+        $swQueue.Stop()
+        Assert-That ("TIMEOUT-TC2: GET /queue answers within " + $boundMaxSeconds + "s (" + [int]$swQueue.Elapsed.TotalSeconds + "s)") (($queueBounded.code -eq 200) -and ($swQueue.Elapsed.TotalSeconds -lt $boundMaxSeconds)) ("code=" + $queueBounded.code + " elapsed=" + $swQueue.Elapsed.TotalSeconds)
     }
 } finally {
     # --- TC11 - never leave the agent running.
@@ -317,6 +383,68 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 300
 }
 Assert-That "TC11 shutdown: agent stopped and port $Port is free" $stopped "port still bound after 20s"
+
+# --- T09 step 6 handoff - the single-instance mutex must be keyed by port.
+# --- Runs after the main agent above is fully stopped, on its own two fresh
+# --- ports, so it never overlaps the $Port agent or the real 1818 agent.
+$mtxPortA = 18182
+$mtxPortB = 18183
+if (-not (Test-PortFree $mtxPortA) -or -not (Test-PortFree $mtxPortB)) {
+    Assert-That "TC-MUTEX setup: ports $mtxPortA and $mtxPortB are free for the mutex test" $false "one of the mutex-test ports is already in use"
+} else {
+    $mtxProcA = $null
+    $mtxProcB = $null
+    $mtxProcSame = $null
+    try {
+        $mtxProcA = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $agentPath, "-Port", "$mtxPortA") `
+            -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput (Join-Path $env:TEMP "qv-test-mutexA-out.log") `
+            -RedirectStandardError (Join-Path $env:TEMP "qv-test-mutexA-err.log")
+
+        $mtxUpA = $false
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline) {
+            $r = @(Invoke-Agent "GET" "/status" $null 3 $mtxPortA)
+            if ($r[0].code -eq 200) { $mtxUpA = $true; break }
+            Start-Sleep -Milliseconds 300
+        }
+        Assert-That "TC-MUTEX: agent A on port $mtxPortA comes up" $mtxUpA "agent A never answered /status"
+
+        $mtxProcB = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $agentPath, "-Port", "$mtxPortB") `
+            -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput (Join-Path $env:TEMP "qv-test-mutexB-out.log") `
+            -RedirectStandardError (Join-Path $env:TEMP "qv-test-mutexB-err.log")
+
+        $mtxUpB = $false
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline) {
+            $r = @(Invoke-Agent "GET" "/status" $null 3 $mtxPortB)
+            if ($r[0].code -eq 200) { $mtxUpB = $true; break }
+            Start-Sleep -Milliseconds 300
+        }
+        Assert-That "TC-MUTEX: agent B on a DIFFERENT port ($mtxPortB) also comes up while A is running" $mtxUpB "agent B never answered /status while A held a different port"
+
+        # A second agent on the SAME port as A must still be refused (exit 2) -
+        # the per-port change must not weaken the existing single-instance guard.
+        # No -RedirectStandardOutput/-RedirectStandardError here: on this host
+        # combining redirection with -PassThru leaves the returned process's
+        # ExitCode $null even after HasExited is true; plain -WindowStyle Hidden
+        # (as used elsewhere in this file) reports ExitCode correctly.
+        $mtxProcSame = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $agentPath, "-Port", "$mtxPortA") `
+            -PassThru -WindowStyle Hidden
+        $mtxExited = $mtxProcSame.WaitForExit(15000)
+        $mtxSameCode = -1
+        if ($mtxExited) { $mtxSameCode = $mtxProcSame.ExitCode }
+        Assert-That "TC-MUTEX: a second agent on the SAME port ($mtxPortA) still exits 2" ($mtxExited -and ($mtxSameCode -eq 2)) ("exited=" + $mtxExited + " code=" + $mtxSameCode)
+    } finally {
+        foreach ($p in @($mtxProcA, $mtxProcB, $mtxProcSame)) {
+            if ($p) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        }
+    }
+}
 
 Write-Output ""
 if ($script:Failures -eq 0) {
