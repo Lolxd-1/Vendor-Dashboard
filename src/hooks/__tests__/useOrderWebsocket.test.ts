@@ -1,3 +1,4 @@
+import type { IFrame, StompConfig } from "@stomp/stompjs";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { toast } from "react-hot-toast";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,10 +21,10 @@ import hookSource from "../useOrderWebsocket.tsx?raw";
 vi.mock("@stomp/stompjs", () => {
   class FakeStompClient {
     static instances: FakeStompClient[] = [];
-    config: Record<string, any>;
+    config: StompConfig;
     messageHandler: ((message: { body: string }) => void) | null = null;
 
-    constructor(config: Record<string, any>) {
+    constructor(config: StompConfig) {
       this.config = config;
       FakeStompClient.instances.push(this);
     }
@@ -40,10 +41,14 @@ vi.mock("@stomp/stompjs", () => {
 import { Client } from "@stomp/stompjs";
 const FakeClient = Client as unknown as {
   instances: Array<{
-    config: Record<string, any>;
+    config: StompConfig;
     messageHandler: ((message: { body: string }) => void) | null;
   }>;
 };
+
+// onConnect's real signature takes the broker's CONNECTED frame; these tests only care that the
+// callback runs, so a stub satisfies the type without asserting on frame content.
+const fakeFrame = {} as IFrame;
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const base64UrlEncode = (value: unknown): string =>
@@ -126,7 +131,7 @@ describe("phase parsing standardised on `||` (T03 handoff)", () => {
     const instance = FakeClient.instances[FakeClient.instances.length - 1];
 
     act(() => {
-      instance.config.onConnect();
+      instance.config.onConnect!(fakeFrame);
     });
     act(() => {
       instance.messageHandler!({
@@ -220,7 +225,7 @@ describe("lastMessageAt is stamped only by a prompt frame", () => {
     const { result } = renderHook(() => useOrderWebsocket());
     const instance = FakeClient.instances[FakeClient.instances.length - 1];
     act(() => {
-      instance.config.onConnect();
+      instance.config.onConnect!(fakeFrame);
     });
     return { result, instance };
   };

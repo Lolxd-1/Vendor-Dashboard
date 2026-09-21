@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useGetVendorOrdersQuery } from "../apis/orderApi";
 import { useDashboardStore } from "../stores/useDashboardStore";
 import { OrderStatusFilter } from "../types/filters";
@@ -33,11 +33,34 @@ export const pickInterval = (socket: OrderSocketState, now: number): number =>
 export const useOrderSync = (shopId: string | null, socket: OrderSocketState) => {
   const reconcile = useDashboardStore((state) => state.reconcile);
 
+  // pickInterval is pure, so Date.now() cannot be called here during render. An effect derives
+  // the interval instead, recomputing whenever the socket's delivery evidence changes and
+  // scheduling one more re-evaluation for the moment the trust window itself expires — so a shop
+  // that goes quiet still drops back to FAST_MS without waiting on some unrelated re-render.
+  const [pollingInterval, setPollingInterval] = useState<number>(FAST_MS);
+
+  useEffect(() => {
+    const evaluate = () =>
+      setPollingInterval(
+        pickInterval({ isConnected: socket.isConnected, lastMessageAt: socket.lastMessageAt }, Date.now())
+      );
+
+    evaluate();
+
+    if (socket.lastMessageAt === null) return;
+
+    const msUntilExpiry = socket.lastMessageAt + TRUST_WINDOW_MS - Date.now();
+    if (msUntilExpiry <= 0) return;
+
+    const timer = setTimeout(evaluate, msUntilExpiry);
+    return () => clearTimeout(timer);
+  }, [socket.isConnected, socket.lastMessageAt]);
+
   const { data, refetch } = useGetVendorOrdersQuery(
     { shopId: shopId ?? "", orderStatus: ACTIVE_STATUSES },
     {
       skip: !shopId,
-      pollingInterval: pickInterval(socket, Date.now()),
+      pollingInterval,
     }
   );
 
