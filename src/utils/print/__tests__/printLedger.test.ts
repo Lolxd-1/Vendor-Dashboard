@@ -1,5 +1,9 @@
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { toast } from "react-hot-toast";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PRINT_TIMEOUT_MS, printTextDetailed } from "../printAgent";
+import { usePrintOrder } from "../../../hooks/usePrintOrder";
+import type { Order } from "../../../types/order";
+import { PRINT_TIMEOUT_MS, printTextDetailed, savePrinterSettings } from "../printAgent";
 import {
   claimPrint,
   clearPrinted,
@@ -10,6 +14,15 @@ import {
   setOrderStamp,
   wasPrinted,
 } from "../printLedger";
+
+// usePrintOrder's toasts are the whole point of N2 — real react-hot-toast has
+// no listener mounted in these tests, so the calls themselves are the assertion.
+vi.mock("react-hot-toast", () => {
+  const fn = vi.fn() as unknown as { (msg: string, opts?: unknown): void } & Record<string, ReturnType<typeof vi.fn>>;
+  fn.success = vi.fn();
+  fn.error = vi.fn();
+  return { toast: fn, default: fn };
+});
 
 // A minimal Storage-shaped fake that can be made to throw on demand, so we
 // can prove the ledger survives a real QuotaExceededError instead of just
@@ -274,5 +287,109 @@ describe("printAgent timeout budget vs the agent's own bounds", () => {
     // agent.ps1: $PrinterCallTimeoutMs = 3000 bounds the spooler call, $doc.Print()
     // is unbounded past it, and the listener's EntityBody ceiling is 15s.
     expect(PRINT_TIMEOUT_MS).toBeGreaterThanOrEqual(15_000);
+  });
+});
+
+// ─── N2/N4: usePrintOrder.printBothOnAccept — partial outcomes must never
+// claim a browser window opened when none did, and the print-idempotency
+// claim must run before either print is attempted, not just before the
+// ledger flag is read elsewhere. ───
+
+const makeOrder = (orderId: string): Order => ({
+  orderId,
+  campusId: "CAMPUS-1",
+  shopId: 1,
+  customerId: 1001,
+  customerName: "Rahul Sharma",
+  customerMobile: 9876543210,
+  customerAddress: "Hostel Block A, Near Gate 2",
+  state: "ACCEPTED",
+  creationTime: "2026-09-20 12:30:00",
+  preparationTime: 15,
+  orderItem: [{ id: 1, name: "Veg Burger", itemCount: 2, itemPrice: 120 }],
+  totalItemCount: 2,
+  productCount: 1,
+  totalAmount: 240,
+  invoiceAmount: 240,
+  amountExcludingDeliveryFee: 240,
+  deliveryFee: 0,
+  fulfillmentOption: "Delivery",
+  productImageURLs: "",
+  stateLabel: "Accepted",
+  orderDescription: "",
+  orderLink: "",
+  paymentMethod: "Online",
+  isSettled: false,
+});
+
+describe("usePrintOrder.printBothOnAccept — partial outcomes and claim ordering", () => {
+  const abortError = () =>
+    Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("TC-N2a: bill succeeds + KOT times out — names the failed slip, never claims a window opened", async () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    savePrinterSettings({ counterPrinter: "Counter1", kitchenPrinter: "Kitchen1", agentPort: 1818 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: { body: string }) => {
+        const { printer } = JSON.parse(init.body);
+        if (printer === "Kitchen1") return Promise.reject(abortError());
+        return Promise.resolve({ ok: true } as Response);
+      })
+    );
+
+    const { result } = renderHook(() => usePrintOrder());
+
+    await act(async () => {
+      await result.current.printBothOnAccept(makeOrder("QV-N2A"), 15);
+    });
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    const message = (toast.error as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(message).toMatch(/KOT/);
+    expect(message).not.toMatch(/window opened/i);
+    // The bare toast(...) callable is ONLY ever used for "window opened" — it
+    // must not have fired at all on a run where no window opened.
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("TC-N2b: both slips open a real browser window — the window-opened message IS still used", async () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    vi.stubGlobal("open", vi.fn(() => ({ document: { write: vi.fn(), close: vi.fn() } })));
+
+    const { result } = renderHook(() => usePrintOrder());
+
+    await act(async () => {
+      await result.current.printBothOnAccept(makeOrder("QV-N2B"), 15);
+    });
+
+    expect(toast).toHaveBeenCalledWith("Print window opened — confirm to print", { icon: "🖨️" });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("TC-N4: two concurrent accepts for the SAME order attempt exactly one print", async () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true } as Response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => usePrintOrder());
+    const order = makeOrder("QV-RACE");
+
+    await act(async () => {
+      const p1 = result.current.printBothOnAccept(order, 15);
+      const p2 = result.current.printBothOnAccept(order, 15);
+      await Promise.all([p1, p2]);
+    });
+
+    // Bill + KOT for ONE call = 2 requests. If claimPrint ever moved below the
+    // Promise.all, both concurrent calls would print — 4 requests, not 2.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

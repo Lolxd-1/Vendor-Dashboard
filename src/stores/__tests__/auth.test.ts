@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { toast } from "react-hot-toast";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isTokenExpired, useAuthStore } from "../useAuthStore";
 
 const STORAGE_KEY = "quickverse-auth-store";
@@ -20,6 +21,10 @@ beforeEach(() => {
     shopId: null,
     phone: null,
   });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("isTokenExpired", () => {
@@ -122,5 +127,44 @@ describe("clearSession", () => {
 
     expect(useAuthStore.getState().isAuthenticated).toBe(false);
     expect(useAuthStore.getState().jwt).toBeNull();
+  });
+});
+
+// ─── #14: onRehydrateStorage was the last silent logout — ProtectedRoute
+// bounces to / with no message, and useOrderWebsocket never reaches its own
+// expiry toast because it returns early at !jwt. Same message, same store. ───
+
+describe("onRehydrateStorage surfaces the same expiry toast", () => {
+  it("TC14: rehydrating with an EXPIRED token notifies exactly once", async () => {
+    const expiredToken = makeToken({ exp: nowSeconds() - 3600 });
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: { isAuthenticated: true, jwt: expiredToken, shopId: "S1", phone: "9990001111" },
+        version: 0,
+      }),
+    );
+    const toastErrorSpy = vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+
+    await useAuthStore.persist.rehydrate();
+
+    expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+    expect(toastErrorSpy).toHaveBeenCalledWith("Session expired - please log in again");
+  });
+
+  it("TC15: rehydrating with a VALID token notifies not at all", async () => {
+    const validToken = makeToken({ exp: nowSeconds() + 3600 });
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: { isAuthenticated: true, jwt: validToken, shopId: "S1", phone: "9990001111" },
+        version: 0,
+      }),
+    );
+    const toastErrorSpy = vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+
+    await useAuthStore.persist.rehydrate();
+
+    expect(toastErrorSpy).not.toHaveBeenCalled();
   });
 });

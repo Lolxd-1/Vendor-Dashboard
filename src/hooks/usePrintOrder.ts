@@ -34,16 +34,30 @@ export const usePrintOrder = () => {
         printTextDetailed("counter", bill),
         printTextDetailed("kitchen", kot),
       ]);
-      if (billRes.where === "agent" && kotRes.where === "agent") {
+      const results = [
+        { label: "Bill", out: billRes },
+        { label: "KOT", out: kotRes },
+      ];
+      const failed = results.filter((r) => r.out.where === "failed");
+      const browser = results.filter((r) => r.out.where === "browser");
+      if (failed.length === 0 && browser.length === 0) {
         toast.success("Bill + KOT sent to printer");
-      } else if (billRes.where === "failed" && kotRes.where === "failed") {
+      } else if (failed.length === results.length) {
         // Nothing reached a printer — hand the claim back so Reprint can retry.
         releasePrint(order.orderId);
         const reason = billRes.error || kotRes.error || "helper unreachable";
         toast.error(`Print failed: ${reason} — use Reprint`, { duration: 6000 });
-      } else {
-        // Browser fallback opened — staff confirms once. The claim stands.
+      } else if (browser.length > 0 && failed.length === 0) {
+        // Browser fallback opened for at least one slip, neither failed — staff
+        // confirms once. The claim stands.
         toast("Print window opened — confirm to print", { icon: "🖨️" });
+      } else {
+        // Partial: one slip out, one failed — say exactly which, same shape as
+        // reprint's partial branch. Never claim a window opened that didn't.
+        toast.error(
+          `Partial print — ${results.map((r) => `${r.label}:${r.out.where}${r.out.error ? ` (${r.out.error})` : ""}`).join(", ")} — use Reprint`,
+          { duration: 6000 }
+        );
       }
     } finally {
       setPrinting(false);

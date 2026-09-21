@@ -370,6 +370,35 @@ describe("reconcile", () => {
     expect(store().readyOrders.map(o => o.orderId)).toEqual(["QV-1"]);
     expect(store().acceptedOrders).toHaveLength(0);
   });
+
+  // ─── N1: a KNOWN terminal status must drop the order on THIS poll, exactly
+  // like BASE — I7's grace window is only for a genuinely UNRECOGNISED status.
+
+  it("TC-N1a: a poll reporting CANCELLED removes the order immediately, so the ring stops", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "CANCELLED")]);
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-N1a: same for COMPLETED and REJECTED", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().reconcile([makeOrder("QV-1", "COMPLETED")]);
+    expect(store().pendingOrders).toHaveLength(0);
+
+    store().addPendingOrder(makeOrder("QV-2", "PENDING"));
+    store().reconcile([makeOrder("QV-2", "REJECTED")]);
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-N1b: a genuinely unrecognised state still leaves the order alone for its grace window", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "SOME_NEW_STATE")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
 });
 
 describe("upsertOrder is forward-only", () => {

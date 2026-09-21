@@ -108,18 +108,92 @@ if ($haveVirtual) {
 $srcPrintText = Get-AgentFunctionSource "Print-Text"
 $havePrintText = ($null -ne $srcPrintText)
 Assert-That "TC-C4a hang: Print-Text is defined exactly once in agent.ps1" $havePrintText "function not found in AST"
+
+# N5: TC-C4c used to scan only Print-Text's OWN body, so moving the raw lookup
+# into a helper Print-Text calls kept it green while the wedge came back. This
+# walks the transitive "this function's body mentions that other function's
+# name" closure from a start point, so every function actually reachable from
+# it gets scanned, however many helpers deep. Name-mention (not a full call
+# graph) can only OVER-count, never miss a real call - a call always spells
+# the callee's name in the caller's source - so it cannot under-detect.
+function Get-ReachableAgentFunctionSources($ast, [string] $startName) {
+    $allDefs = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+    }, $true))
+    $byName = @{}
+    foreach ($d in $allDefs) { $byName[$d.Name] = $d.Extent.Text }
+
+    $visited = @{}
+    $visited[$startName] = $true
+    $queue = New-Object System.Collections.ArrayList
+    [void]$queue.Add($startName)
+    while ($queue.Count -gt 0) {
+        $name = $queue[0]
+        $queue.RemoveAt(0)
+        $src = $byName[$name]
+        if (-not $src) { continue }
+        foreach ($otherName in $byName.Keys) {
+            if ($visited.ContainsKey($otherName)) { continue }
+            if ($src -match ("\b" + [regex]::Escape($otherName) + "\b")) {
+                $visited[$otherName] = $true
+                [void]$queue.Add($otherName)
+            }
+        }
+    }
+    $result = @{}
+    foreach ($n in $visited.Keys) { $result[$n] = $byName[$n] }
+    return $result
+}
+
 if ($havePrintText) {
     Assert-That "TC-C4b hang: Print-Text routes its printer lookup through Invoke-BoundedSpooler" ($srcPrintText -match 'Invoke-BoundedSpooler') "no bounded call in Print-Text"
 
-    # Any Get-Printer that is not inside a bounded call runs on the request thread.
+    # Any Get-Printer that is not inside a bounded call, anywhere reachable
+    # from /print (Print-Text itself or a helper it calls), runs on the
+    # request thread. \b after Get-Printer excludes Get-PrinterDetail /
+    # Get-PrinterRunspace, whose own declaration lines would otherwise match.
+    $reachableFromPrint = Get-ReachableAgentFunctionSources $ast "Print-Text"
     $unboundedLine = ""
-    foreach ($ln in ($srcPrintText -split "\r?\n")) {
-        $trimmed = $ln.Trim()
-        if (($trimmed -notmatch '^#') -and ($trimmed -match 'Get-Printer') -and ($trimmed -notmatch 'Invoke-BoundedSpooler')) { $unboundedLine = $trimmed }
+    $unboundedFn = ""
+    foreach ($fnName in $reachableFromPrint.Keys) {
+        foreach ($ln in ($reachableFromPrint[$fnName] -split "\r?\n")) {
+            $trimmed = $ln.Trim()
+            if (($trimmed -notmatch '^#') -and ($trimmed -match 'Get-Printer\b') -and ($trimmed -notmatch 'Invoke-BoundedSpooler')) {
+                $unboundedLine = $trimmed
+                $unboundedFn = $fnName
+            }
+        }
     }
-    Assert-That "TC-C4c hang: no Get-Printer in Print-Text runs outside the bounded helper" ($unboundedLine -eq "") ("raw call still on the request thread: " + $unboundedLine)
+    Assert-That "TC-C4c hang: no raw Get-Printer anywhere reachable from /print, even via a helper" ($unboundedLine -eq "") ("in " + $unboundedFn + ": " + $unboundedLine)
 
     Assert-That "TC-C4d hang: a timed-out lookup fails the request distinctly, not as 'Printer not found'" ($srcPrintText -match 'printer lookup timed out') "no distinct timeout failure in Print-Text"
+
+    # TC-N5 self-check: prove the widened scan actually defeats the refactor
+    # it is named for, on a synthetic AST it never executes. The helper name
+    # deliberately does NOT contain "Get-Printer" - it must be caught by
+    # reachability, not by coincidentally matching the scan regex on its name.
+    $wedgeViaHelperSource = @'
+function Resolve-PrinterRows() {
+    return @(Get-Printer | Select-Object Name, DriverName, PortName)
+}
+function Print-Text($printerName, $text) {
+    $rows = @(Resolve-PrinterRows)
+    if (-not $rows) { throw "Printer not found: $printerName" }
+}
+'@
+    $wedgeTokens = $null
+    $wedgeErrors = $null
+    $wedgeAst = [System.Management.Automation.Language.Parser]::ParseInput($wedgeViaHelperSource, [ref]$wedgeTokens, [ref]$wedgeErrors)
+    $wedgeReachable = Get-ReachableAgentFunctionSources $wedgeAst "Print-Text"
+    $wedgeUnboundedLine = ""
+    foreach ($fnName in $wedgeReachable.Keys) {
+        foreach ($ln in ($wedgeReachable[$fnName] -split "\r?\n")) {
+            $trimmed = $ln.Trim()
+            if (($trimmed -notmatch '^#') -and ($trimmed -match 'Get-Printer\b') -and ($trimmed -notmatch 'Invoke-BoundedSpooler')) { $wedgeUnboundedLine = $trimmed }
+        }
+    }
+    Assert-That "TC-N5 self-check: the reachability scan catches the wedge even moved into a helper function" ($wedgeUnboundedLine -ne "") "widened check failed to detect the reintroduced wedge"
 }
 
 # --- TC-C4e/f - and the helper it now uses really is bounded: a spooler call

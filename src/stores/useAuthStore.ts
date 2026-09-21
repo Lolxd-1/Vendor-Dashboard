@@ -1,5 +1,6 @@
 import { persist, createJSONStorage } from "zustand/middleware";
 import { create } from "zustand";
+import { toast } from "react-hot-toast";
 
 type AuthStore = {
   isAuthenticated: boolean;
@@ -75,6 +76,10 @@ export const useAuthStore = create<AuthStore>()(
         state.isAuthenticated = !!state.jwt && !expired;
         if (expired) {
           state.jwt = null;
+          // Otherwise ProtectedRoute bounces straight to the login screen with
+          // no explanation — the same once-only message the mount-check and
+          // 60s-interval paths already show for every other expiry.
+          toast.error("Session expired - please log in again");
         }
       },
     },

@@ -14,6 +14,15 @@ export const normalisePhase = (raw: unknown): OrderPhase | null => {
     : null;
 };
 
+// States the server will never revive. useOrderWebsocket.tsx drops an order the
+// instant its socket frame reports one of these — exported here so reconcile
+// (the REST poll path) can match that exact set instead of drifting from it.
+export const TERMINAL_STATES: ReadonlySet<string> = new Set(["REJECTED", "CANCELLED", "COMPLETED"]);
+
+// Same normalisation as normalisePhase, so "cancelled" / " CANCELLED " still count.
+export const isTerminalState = (raw: unknown): boolean =>
+  typeof raw === "string" && TERMINAL_STATES.has(raw.trim().toUpperCase());
+
 // Socket-driven moves are forward-only. A stale re-broadcast (a reconnect
 // backfill, say) must never drag an already-ACCEPTED order back into Pending:
 // pendingOrders.length would rise, the ring would restart and never stop, and
@@ -138,18 +147,26 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     // runs every 10s.
     const listed = serverOrders.map(o => ({ order: o, phase: phaseOf(o) }));
 
-    // Only an order this poll actually placed in a column counts as "the server
-    // has it". One whose phase does not normalise is no news, so the local copy
-    // keeps its grace window rather than being deleted on the spot.
-    const serverIds = new Set(listed.filter(l => l.phase !== null).map(l => l.order.orderId));
+    // "The server has an opinion about this" means either of two things: this
+    // poll placed it in a column, OR it reported a KNOWN terminal status
+    // (REJECTED/CANCELLED/COMPLETED) — gone for good, same as BASE dropped it.
+    // Only a state that is neither — genuinely unrecognised — is no news, so
+    // the local copy keeps its grace window rather than being deleted on the
+    // spot or, just as bad, kept forever.
+    const serverIds = new Set(
+      listed
+        .filter(l => l.phase !== null || isTerminalState(l.order.state))
+        .map(l => l.order.orderId)
+    );
 
     const inColumn = (phase: OrderPhase) =>
       listed.filter(l => l.phase === phase).map(l => smartMerge(l.order, phase));
 
     // Absent from the server list: keep it only while it is young enough that
-    // the backend has plausibly not indexed it yet. A genuine cancellation
-    // arrives over the socket as CANCELLED and removeOrder drops it at once,
-    // independent of this path, so the window cannot strand a dead order.
+    // the backend has plausibly not indexed it yet. A poll that lists the order
+    // as a KNOWN terminal status is not "absent" — serverIds already covers it
+    // above, so it drops on this same poll, exactly like a socket CANCELLED.
+    // Only a status nothing above recognises gets this grace window at all.
     const survivors = (list: StoredOrder[]) =>
       list
         .filter(o => !serverIds.has(o.orderId))
