@@ -42,7 +42,6 @@ interface DashboardState {
   addPendingOrder: (order: Order) => void;
   reconcile: (serverOrders: Order[]) => void;
   setInitialOrders: (orders: Order[]) => void;
-  updateOrder: (orderId: string, updates: Partial<Order>) => void;
   upsertOrder: (order: Partial<Order> & { orderId: string }, phase: OrderPhase) => void;
   moveToAccepted: (orderId: string, preparationTime: number) => void;
   moveToReady: (orderId: string) => void;
@@ -138,12 +137,6 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const newOrder: StoredOrder = { ...order, state: "PENDING", __receivedAt: Date.now() };
     return { pendingOrders: [...state.pendingOrders, newOrder] };
   }),
-
-  updateOrder: (orderId, updates) => set((state) => ({
-    pendingOrders: state.pendingOrders.map(o => o.orderId === orderId ? { ...o, ...updates } : o),
-    acceptedOrders: state.acceptedOrders.map(o => o.orderId === orderId ? { ...o, ...updates } : o),
-    readyOrders: state.readyOrders.map(o => o.orderId === orderId ? { ...o, ...updates } : o),
-  })),
 
   // A phase change from another device: merge the fields AND move the order into
   // the column the phase names. updateOrder only merges, so it never moves.

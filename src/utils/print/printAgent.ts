@@ -99,21 +99,6 @@ export const getAgentPrinterDetails = async (): Promise<PrinterInfo[]> => {
 export const getRealPrinterNames = (detail: PrinterInfo[]): string[] =>
   detail.filter((d) => !d.isVirtual).map((d) => d.name);
 
-export const getAgentPrinters = async (): Promise<string[]> => {
-  const { agentPort } = getPrinterSettings();
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 2000);
-    const res = await fetch(`http://127.0.0.1:${agentPort}/printers`, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data?.printers) ? data.printers : [];
-  } catch {
-    return [];
-  }
-};
-
 export const getAgentVersion = async (): Promise<string | null> => {
   const { agentPort } = getPrinterSettings();
   try {
@@ -183,13 +168,6 @@ export const printViaAgentDetailed = async (printer: string, text: string): Prom
   }
 };
 
-// Silent path — agent writes to the named Windows printer via spooler,
-// so PetPooja jobs and ours line up one after other, never half-mixed.
-export const printViaAgent = async (printer: string, text: string): Promise<boolean> => {
-  const r = await printViaAgentDetailed(printer, text);
-  return r.ok;
-};
-
 export const checkAgentOnline = async (): Promise<boolean> => {
   const { agentPort } = getPrinterSettings();
   try {
@@ -242,11 +220,6 @@ export const printTextDetailed = async (
   if (!unreachable) return { where: "failed", printer, error: r.error };
   const opened = printViaBrowser(kind === "counter" ? "QuickVerse Bill" : "QuickVerse KOT", text);
   return opened ? { where: "browser", printer } : { where: "failed", printer, error: r.error };
-};
-
-export const printText = async (kind: "counter" | "kitchen", text: string): Promise<"agent" | "browser" | "failed"> => {
-  const o = await printTextDetailed(kind, text);
-  return o.where;
 };
 
 // exp2: spooler truth. Agent 1.3.0-exp2+ serves GET /queue:

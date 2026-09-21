@@ -471,30 +471,6 @@ export async function selfTest(): Promise<boolean> {
 /* Output device routing (Chrome 110+)                                        */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-export async function listOutputDevices(): Promise<{ id: string; label: string }[]> {
-  if (!navigator.mediaDevices?.enumerateDevices) return [];
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices
-    .filter(d => d.kind === 'audiooutput')
-    .map(d => ({ id: d.deviceId, label: d.label || '(unnamed device)' }));
-}
-
-export async function requestDeviceLabels(): Promise<boolean> {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach(t => t.stop());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function setOutputDevice(deviceId: string): Promise<boolean> {
-  preferredSinkId = deviceId;
-  try { localStorage.setItem('orderAlert.sinkId', deviceId); } catch { /* ignore */ }
-  return applySinkId();
-}
-
 async function applySinkId(): Promise<boolean> {
   if (!preferredSinkId) {
     try { preferredSinkId = localStorage.getItem('orderAlert.sinkId'); } catch { /* ignore */ }
