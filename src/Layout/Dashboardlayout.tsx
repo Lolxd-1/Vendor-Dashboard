@@ -121,8 +121,14 @@ const Layout = () => {
     };
   }, [pendingOrders.length]);
 
-  // Cleanup title on unmount.
-  useEffect(() => () => stopTitleFlash(), []);
+  // Cleanup title AND the ring on unmount. Mount-scoped on purpose: hanging
+  // Alert.stop() off the [pendingOrders] effect would silence the ring on every
+  // poll. The forced-expiry logout unmounts Layout with orders still pending,
+  // and the ring loops in module state — this is its only reachable stop.
+  useEffect(() => () => {
+    void Alert.stop();
+    stopTitleFlash();
+  }, []);
 
   const handleEnableSound = async () => {
     const armed = await Alert.arm();

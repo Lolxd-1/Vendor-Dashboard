@@ -140,12 +140,20 @@ const agentUrl = (port: number) => `http://127.0.0.1:${port}/print`;
 export interface AgentPrintResult {
   ok: boolean;
   error?: string;
+  timedOut?: boolean; // we stopped waiting — the job may still be printing
 }
+
+// The agent bounds its own spooler calls at 3000ms, $doc.Print() is unbounded
+// past that, and its listener gives a request 15s (EntityBody). Any budget below
+// that ceiling gives up on jobs that are still printing — and the old 2500ms was
+// below the agent's FIRST bound, so a big bill reliably produced two copies.
+// The probes (status/printers/queue) keep their short timeouts: they are polled.
+export const PRINT_TIMEOUT_MS = 20_000;
 
 export const printViaAgentDetailed = async (printer: string, text: string): Promise<AgentPrintResult> => {
   const { agentPort } = getPrinterSettings();
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 2500);
+  const t = setTimeout(() => ctrl.abort(), PRINT_TIMEOUT_MS);
   try {
     const res = await fetch(agentUrl(agentPort), {
       method: "POST",
@@ -161,7 +169,17 @@ export const printViaAgentDetailed = async (printer: string, text: string): Prom
       /* ignore */
     }
     return { ok: false, error: body || `helper replied ${res.status}` };
-  } catch {
+  } catch (err) {
+    // An abort is NOT "the helper is not installed": we reached it and gave up
+    // waiting. Telling the two apart is what keeps a timeout out of the browser
+    // fallback below.
+    if ((err as Error)?.name === "AbortError") {
+      return {
+        ok: false,
+        timedOut: true,
+        error: "printer did not answer in time — CHECK THE PRINTER before using Reprint",
+      };
+    }
     return { ok: false, error: "helper unreachable — is print-agent running on THIS pc?" };
   } finally {
     clearTimeout(t);
@@ -213,10 +231,14 @@ export const printTextDetailed = async (
   const printer = kind === "counter" ? s.counterPrinter : s.kitchenPrinter;
   const r = await printViaAgentDetailed(printer, text);
   if (r.ok) return { where: "agent", printer };
+  // We gave up waiting, so the job may well be on paper already. Opening the
+  // browser window here is what puts a second copy of the same bill on the
+  // Windows default printer while the agent is still printing the first.
+  if (r.timedOut) return { where: "failed", printer, error: r.error };
   // Agent reachable but refused (wrong queue name, spooler error) → do NOT
   // silently fall back to browser; surface the reason so staff fixes the queue.
   // Only fall back when the helper itself is unreachable (not installed).
-  const unreachable = /unreachable|failed to fetch|aborted|network/i.test(r.error || "");
+  const unreachable = /unreachable|failed to fetch|network/i.test(r.error || "");
   if (!unreachable) return { where: "failed", printer, error: r.error };
   const opened = printViaBrowser(kind === "counter" ? "QuickVerse Bill" : "QuickVerse KOT", text);
   return opened ? { where: "browser", printer } : { where: "failed", printer, error: r.error };

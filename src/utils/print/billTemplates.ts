@@ -96,7 +96,11 @@ export const buildCounterBill = (order: Order, prepTime?: number): string => {
   }
   L.push(row("Grand Total", `Rs ${money(order.invoiceAmount || subTotal)}`));
   if (payment.collect !== null) L.push(center(`*** COLLECT Rs ${money(payment.collect)} ***`));
-  L.push(`Paid via ${order.paymentMethod || "Online"}`);
+  // AC7: the method line must never read as a payment claim on an unsettled bill —
+  // directly under "COLLECT Rs 320" it is what makes staff hand the bag over
+  // without taking the cash. paymentLabel already decides settled-ness.
+  const method = order.paymentMethod || "Online";
+  L.push(payment.headline === "PAID" ? `Paid via ${method}` : `Pay by ${method}`);
   L.push(line());
   L.push(center("Tax to be paid u/s 9(5) by ECO"));
   L.push(line());

@@ -101,6 +101,53 @@ if ($haveVirtual) {
     Assert-That "TC10 routing: renamed real queue 'Counter 1' is NOT virtual" ($isRenamed -eq $false) ("got " + $isRenamed)
 }
 
+# --- TC-C4 - POST /print must not be able to wedge the agent. T09 bounded the
+# --- same cmdlet for /printers and /queue but left the print path raw, and the
+# --- request loop is single-threaded: one hung Get-Printer there means no
+# --- /status, no /printers, no /queue and no prints until a reboot.
+$srcPrintText = Get-AgentFunctionSource "Print-Text"
+$havePrintText = ($null -ne $srcPrintText)
+Assert-That "TC-C4a hang: Print-Text is defined exactly once in agent.ps1" $havePrintText "function not found in AST"
+if ($havePrintText) {
+    Assert-That "TC-C4b hang: Print-Text routes its printer lookup through Invoke-BoundedSpooler" ($srcPrintText -match 'Invoke-BoundedSpooler') "no bounded call in Print-Text"
+
+    # Any Get-Printer that is not inside a bounded call runs on the request thread.
+    $unboundedLine = ""
+    foreach ($ln in ($srcPrintText -split "\r?\n")) {
+        $trimmed = $ln.Trim()
+        if (($trimmed -notmatch '^#') -and ($trimmed -match 'Get-Printer') -and ($trimmed -notmatch 'Invoke-BoundedSpooler')) { $unboundedLine = $trimmed }
+    }
+    Assert-That "TC-C4c hang: no Get-Printer in Print-Text runs outside the bounded helper" ($unboundedLine -eq "") ("raw call still on the request thread: " + $unboundedLine)
+
+    Assert-That "TC-C4d hang: a timed-out lookup fails the request distinctly, not as 'Printer not found'" ($srcPrintText -match 'printer lookup timed out') "no distinct timeout failure in Print-Text"
+}
+
+# --- TC-C4e/f - and the helper it now uses really is bounded: a spooler call
+# --- that never returns must hand the request thread back, and must be
+# --- reported as a timeout rather than as an empty printer list (which would
+# --- come back to the vendor as a misleading "Printer not found").
+$srcBounded = Get-AgentFunctionSource "Invoke-BoundedSpooler"
+$srcRunspace = Get-AgentFunctionSource "Get-PrinterRunspace"
+if (($null -ne $srcBounded) -and ($null -ne $srcRunspace)) {
+    # Invoke-BoundedSpooler logs its timeout; the harness only needs the call to work.
+    function Write-AgentLog($msg) { }
+    Invoke-Expression $srcRunspace
+    Invoke-Expression $srcBounded
+
+    $script:PrinterCallTimeoutMs = 2000
+    $script:PrinterRunspace = $null
+    $script:LastSpoolerTimedOut = $false
+
+    $swHang = [System.Diagnostics.Stopwatch]::StartNew()
+    $hangRows = @(Invoke-BoundedSpooler { Start-Sleep -Seconds 30 } "HangProbe")
+    $swHang.Stop()
+
+    Assert-That ("TC-C4e hang: a printer lookup that never returns gives the thread back in " + [int]$swHang.Elapsed.TotalSeconds + "s") ($swHang.Elapsed.TotalSeconds -lt 15) ("took " + $swHang.Elapsed.TotalSeconds + "s")
+    Assert-That "TC-C4f hang: the hang is reported as a timeout, not as an empty printer list" ($script:LastSpoolerTimedOut -eq $true) "LastSpoolerTimedOut was not set"
+    Assert-That "TC-C4g hang: a bounded call that times out yields no rows" ($hangRows.Count -eq 0) ("got " + $hangRows.Count + " rows")
+}
+
+
 # --- HTTP helpers -----------------------------------------------------------
 function Invoke-Agent($method, $path, $body, $timeoutSec, $targetPort, $extraHeaders) {
     # NOTE: PowerShell variable names are case-insensitive, so a parameter

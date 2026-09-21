@@ -136,6 +136,21 @@ export const clearPrinted = (orderId: string): void => {
   safeRemoveItem(printedKey(orderId));
 };
 
+// Atomic test-and-set: false if this order was already claimed. Atomic because
+// it is synchronous — JS runs it to completion before any other caller can
+// observe the flag — which is exactly what check-then-act around an `await`
+// is not: two accepts could both read `wasPrinted === false` and both print.
+export const claimPrint = (orderId: string): boolean => {
+  if (wasPrinted(orderId)) return false;
+  markPrinted(orderId);
+  return true;
+};
+
+// Give the claim back when nothing reached a printer, so Reprint can retry.
+export const releasePrint = (orderId: string): void => {
+  clearPrinted(orderId);
+};
+
 export const setOrderStamp = (orderId: string, kind: StampKind, iso: string): void => {
   safeSetItem(stampKey(orderId, kind), iso);
 };

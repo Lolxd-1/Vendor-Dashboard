@@ -273,6 +273,103 @@ describe("reconcile", () => {
     expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
     expect(store().acceptedOrders).toHaveLength(0);
   });
+
+  // ─── C2: __receivedAt means "last time we had evidence this order exists" ───
+
+  it("TC17 (THE BUG): an order the polls kept confirming survives a later poll that omits it", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    // The kitchen is slammed and the card sits in Pending for over two minutes.
+    // Every poll in that window returns it, so the server never stopped seeing it.
+    for (let i = 0; i < 13; i++) {
+      vi.advanceTimersByTime(10_000);
+      store().reconcile([makeOrder("QV-1", "PENDING")]);
+    }
+
+    // Now one poll omits it — a shard timeout the API swallows into a partial list.
+    store().reconcile([]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  it("TC18: an order present in serverOrders always carries a fresh __receivedAt", () => {
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    expect(store().pendingOrders[0].__receivedAt).toBe(Date.now());
+
+    vi.advanceTimersByTime(60_000);
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    expect(store().pendingOrders[0].__receivedAt).toBe(Date.now());
+  });
+
+  it("TC19: an order re-added by a poll gets a full grace window, not zero", () => {
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    vi.advanceTimersByTime(GRACE_MS - 1);
+    store().reconcile([]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  // ─── I7: bucket through normalisePhase, never on a raw string compare ───
+
+  it("TC20: a server order with lower-case state is bucketed into Pending, not dropped", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "pending")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+    expect(store().readyOrders).toHaveLength(0);
+  });
+
+  it("TC21: a padded ACCEPTED lands in Accepted", () => {
+    store().reconcile([makeOrder("QV-1", " Accepted ")]);
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  it("TC22: a server state that does not normalise leaves the local copy alone", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    store().reconcile([makeOrder("QV-1", "SOME_NEW_STATE")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  // ─── I9: a stale poll must not undo what this client just did ───
+
+  it("TC23: a stale PENDING poll does not pull back an order THIS client just accepted", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 15); // writes the acceptedAt session stamp
+
+    store().reconcile([makeOrder("QV-1", "PENDING")]); // replica lag
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC24: once the local stamp is older than GRACE_MS the server wins again", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 15);
+
+    vi.advanceTimersByTime(GRACE_MS + 1);
+    store().reconcile([makeOrder("QV-1", "PENDING")]);
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+  });
+
+  it("TC25: the guard is one-directional — a FORWARD move from the server still lands", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 15);
+
+    store().reconcile([makeOrder("QV-1", "READY_FOR_PICKUP")]);
+
+    expect(store().readyOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+    expect(store().acceptedOrders).toHaveLength(0);
+  });
 });
 
 describe("upsertOrder is forward-only", () => {

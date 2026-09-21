@@ -116,6 +116,9 @@ function Test-IsVirtualPrinter($name, $driver, $port) {
 # next call opens a fresh one.
 $script:PrinterCallTimeoutMs = 3000
 $script:PrinterRunspace = $null
+# Set by Invoke-BoundedSpooler so a caller can tell "the spooler never
+# answered" from "there are no printers" - those need different replies.
+$script:LastSpoolerTimedOut = $false
 
 function Get-PrinterRunspace() {
     if (-not $script:PrinterRunspace -or $script:PrinterRunspace.RunspaceStateInfo.State -ne 'Opened') {
@@ -126,6 +129,7 @@ function Get-PrinterRunspace() {
 }
 
 function Invoke-BoundedSpooler([scriptblock] $Script, [string] $Label, [object[]] $ArgumentList) {
+    $script:LastSpoolerTimedOut = $false
     $ps = [powershell]::Create()
     $ps.Runspace = Get-PrinterRunspace
     try {
@@ -138,6 +142,7 @@ function Invoke-BoundedSpooler([scriptblock] $Script, [string] $Label, [object[]
         Write-AgentLog "TIMEOUT: $Label exceeded $($script:PrinterCallTimeoutMs)ms"
         try { $ps.Stop() } catch { }
         $script:PrinterRunspace = $null
+        $script:LastSpoolerTimedOut = $true
         return @()
     } finally {
         try { $ps.Dispose() } catch { }
@@ -251,8 +256,14 @@ function Print-Text($printerName, $text) {
     # whose proportional font destroys the 42-column layout.
     # Exact name match, never Get-Printer -Name: that treats the name as a
     # wildcard pattern, so a queue called "Bar [Back]" would look missing.
-    $row = @(Get-Printer | Select-Object Name, DriverName, PortName) |
-        Where-Object { $_.Name -eq $printerName } | Select-Object -First 1
+    # Bounded exactly like /printers and /queue. This cmdlet talks to the
+    # spooler, the request loop is single-threaded and the watchdog is
+    # deferred, so a wedged spooler here stops the shop printing anything
+    # at all until someone reboots the PC.
+    $rows = @()
+    try { $rows = @(Invoke-BoundedSpooler { Get-Printer | Select-Object Name, DriverName, PortName } "Get-Printer") } catch { $rows = @() }
+    if ($script:LastSpoolerTimedOut) { throw "printer lookup timed out" }
+    $row = $rows | Where-Object { $_.Name -eq $printerName } | Select-Object -First 1
     if (-not $row) { throw "Printer not found: $printerName" }
     if (Test-IsVirtualPrinter $row.Name $row.DriverName $row.PortName) {
         # Virtual / file queue (PDF, XPS): legacy spooler path.

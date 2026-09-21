@@ -75,9 +75,44 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       ...state.readyOrders,
     ];
 
-    const smartMerge = (incoming: Order): StoredOrder => {
+    const now = Date.now();
+
+    // Where this client currently holds each order, so a poll can be weighed
+    // against what we already know instead of believed on sight.
+    const localPhase = new Map<string, OrderPhase>();
+    for (const o of state.pendingOrders) localPhase.set(o.orderId, "PENDING");
+    for (const o of state.acceptedOrders) localPhase.set(o.orderId, "ACCEPTED");
+    for (const o of state.readyOrders) localPhase.set(o.orderId, "READY_FOR_PICKUP");
+
+    // This client moved the order forward and stamped the moment it did. While
+    // that stamp is fresh, a poll reporting an EARLIER phase is far more likely
+    // replica lag than a genuine revert — and acting on it restarts the ring,
+    // re-fires the notification, resets the prep timer, and invites a vendor to
+    // reject an order the kitchen is already cooking.
+    const movedHereRecently = (orderId: string, phase: OrderPhase): boolean => {
+      if (phase === "PENDING") return false;
+      const iso = getOrderStamp(orderId, phase === "ACCEPTED" ? "acceptedAt" : "readyAt");
+      const stampedAt = iso ? Date.parse(iso) : NaN;
+      return !Number.isNaN(stampedAt) && now - stampedAt < GRACE_MS;
+    };
+
+    // The column a listed order belongs in. Phase strings cannot be trusted, so
+    // this goes through normalisePhase like every other path. null means the
+    // server's value names none of the three columns, so this poll carries no
+    // news about that order at all.
+    const phaseOf = (o: Order): OrderPhase | null => {
+      const serverPhase = normalisePhase(o.state);
+      if (serverPhase === null) return null;
+      const local = localPhase.get(o.orderId);
+      if (local && PHASE_RANK[serverPhase] < PHASE_RANK[local] && movedHereRecently(o.orderId, local)) {
+        return local;
+      }
+      return serverPhase;
+    };
+
+    const smartMerge = (incoming: Order, phase: OrderPhase): StoredOrder => {
       const existing = allExisting.find(e => e.orderId === incoming.orderId);
-      
+
       // sessionStorage timestamps are the most reliable — set by the client
       // at the exact moment of moveToAccepted/moveToReady, in UTC with Z.
       const sessionAcceptedDate = getOrderStamp(incoming.orderId, "acceptedAt");
@@ -85,39 +120,50 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
 
       return {
         ...incoming,
+        // The columns bucket on `state`, so the phase this poll resolved wins.
+        state:           phase,
         // Priority: sessionStorage > local store > API value
         acceptedDate:    sessionAcceptedDate || existing?.acceptedDate    || incoming.acceptedDate,
         readyDate:       sessionReadyDate    || existing?.readyDate       || incoming.readyDate,
         preparationTime: existing?.preparationTime || incoming.preparationTime,
-        __receivedAt:    existing?.__receivedAt,
+        // "Last time we had evidence this order exists", NOT "when it first
+        // arrived": the server just listed it, so that evidence is now. Anchored
+        // to first receipt instead, any order on the board longer than GRACE_MS
+        // was deleted by the first poll that happened to omit it.
+        __receivedAt:    now,
       };
     };
 
-    const serverIds = new Set(serverOrders.map(o => o.orderId));
-    const now = Date.now();
+    // Resolved once per listed order: phaseOf reads sessionStorage, and the poll
+    // runs every 10s.
+    const listed = serverOrders.map(o => ({ order: o, phase: phaseOf(o) }));
+
+    // Only an order this poll actually placed in a column counts as "the server
+    // has it". One whose phase does not normalise is no news, so the local copy
+    // keeps its grace window rather than being deleted on the spot.
+    const serverIds = new Set(listed.filter(l => l.phase !== null).map(l => l.order.orderId));
+
+    const inColumn = (phase: OrderPhase) =>
+      listed.filter(l => l.phase === phase).map(l => smartMerge(l.order, phase));
 
     // Absent from the server list: keep it only while it is young enough that
     // the backend has plausibly not indexed it yet. A genuine cancellation
     // arrives over the socket as CANCELLED and removeOrder drops it at once,
     // independent of this path, so the window cannot strand a dead order.
-    const survivesAbsence = (o: StoredOrder) =>
-      !serverIds.has(o.orderId) && now - (o.__receivedAt ?? 0) < GRACE_MS;
+    const survivors = (list: StoredOrder[]) =>
+      list
+        .filter(o => !serverIds.has(o.orderId))
+        // An order that somehow carries no stamp gets one now — a full window
+        // rather than the zero grace an undefined stamp used to mean.
+        .map(o => ({ ...o, __receivedAt: o.__receivedAt ?? now }))
+        .filter(o => now - o.__receivedAt < GRACE_MS);
 
     // Server-derived orders keep their server order, survivors are appended,
     // so cards do not jump around between polls.
     return {
-      pendingOrders: [
-        ...serverOrders.filter(o => o.state === "PENDING").map(smartMerge),
-        ...state.pendingOrders.filter(survivesAbsence),
-      ],
-      acceptedOrders: [
-        ...serverOrders.filter(o => o.state === "ACCEPTED").map(smartMerge),
-        ...state.acceptedOrders.filter(survivesAbsence),
-      ],
-      readyOrders: [
-        ...serverOrders.filter(o => o.state === "READY_FOR_PICKUP").map(smartMerge),
-        ...state.readyOrders.filter(survivesAbsence),
-      ],
+      pendingOrders:  [...inColumn("PENDING"),          ...survivors(state.pendingOrders)],
+      acceptedOrders: [...inColumn("ACCEPTED"),         ...survivors(state.acceptedOrders)],
+      readyOrders:    [...inColumn("READY_FOR_PICKUP"), ...survivors(state.readyOrders)],
     };
   }),
 

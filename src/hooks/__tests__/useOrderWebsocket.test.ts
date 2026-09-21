@@ -6,7 +6,9 @@ import indexHtmlSource from "../../../index.html?raw";
 import dashboardLayoutSource from "../../Layout/Dashboardlayout.tsx?raw";
 import { useAuthStore } from "../../stores/useAuthStore";
 import { useDashboardStore } from "../../stores/useDashboardStore";
+import type { Order } from "../../types/order";
 import { FAST_MS, SLOW_MS, pickInterval } from "../useOrderSync";
+import { usePendingOrder } from "../usePendingOrders";
 import {
   PROMPT_MAX_MS,
   isPromptFrame,
@@ -37,6 +39,21 @@ vi.mock("@stomp/stompjs", () => {
   }
   return { Client: FakeStompClient };
 });
+
+// usePendingOrder's two process boundaries: the accept mutation and the printer.
+const { acceptOrderMock, printBothOnAcceptMock } = vi.hoisted(() => ({
+  acceptOrderMock: vi.fn(),
+  printBothOnAcceptMock: vi.fn(),
+}));
+
+vi.mock("../../apis/dashboardApi", () => ({
+  useAcceptOrderMutation: () => [acceptOrderMock, { isLoading: false }],
+  useRejectOrderMutation: () => [vi.fn(), { isLoading: false }],
+}));
+
+vi.mock("../usePrintOrder", () => ({
+  usePrintOrder: () => ({ printBothOnAccept: printBothOnAcceptMock }),
+}));
 
 import { Client } from "@stomp/stompjs";
 const FakeClient = Client as unknown as {
@@ -303,5 +320,83 @@ describe("lastMessageAt is stamped only by a prompt frame", () => {
     // bounded by FAST_MS instead of drifting back to the ~30s the vendor reported.
     expect(pickInterval(result.current, Date.now())).toBe(FAST_MS);
     expect(FAST_MS).toBeLessThanOrEqual(10_000);
+  });
+});
+
+// ─── I8: no logout is ever unexplained ───
+// Two expiry paths were built and only one was fixed. The mount-time check runs
+// before the socket is even attempted and trusts Date.now() alone, so a shop PC
+// with a fast clock (dead CMOS battery, no NTP) gets login -> bounce -> login
+// with nothing on screen to explain it.
+
+describe("mount-time expiry surfaces the same toast (I8)", () => {
+  it("TC-I8: an already-expired token at mount clears the session and notifies exactly once", () => {
+    vi.useFakeTimers();
+
+    const token = makeToken({ exp: nowSeconds() - 60 });
+    const clearSessionSpy = vi.fn();
+    useAuthStore.setState({ jwt: token, shopId: "SHOP-1", clearSession: clearSessionSpy });
+    const toastErrorSpy = vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+
+    renderHook(() => useOrderWebsocket());
+
+    expect(clearSessionSpy).toHaveBeenCalledTimes(1);
+    expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+    expect(toastErrorSpy).toHaveBeenCalledWith("Session expired - please log in again");
+
+    // The dead token must not open a socket either.
+    expect(FakeClient.instances).toHaveLength(0);
+
+    // No later path may notify a second time for the same mount.
+    act(() => {
+      vi.advanceTimersByTime(180000);
+    });
+    expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── I10: an accept that fails on the wire may already have committed ───
+
+describe("a failed accept never looks like a clean failure (I10)", () => {
+  // Only orderId is read on this path; printBothOnAccept is mocked.
+  const order = { orderId: "QV-ACCEPT-FAIL" } as Order;
+
+  beforeEach(() => {
+    acceptOrderMock.mockReset();
+    printBothOnAcceptMock.mockReset();
+  });
+
+  it("TC-I10: the toast warns the order may still have been accepted, and nothing prints", async () => {
+    // The backend committed; the reply was lost on the way back.
+    acceptOrderMock.mockReturnValue({ unwrap: () => Promise.reject(new Error("timeout")) });
+    const toastErrorSpy = vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+
+    const { result } = renderHook(() => usePendingOrder(order));
+    await act(async () => {
+      await result.current.handleAccept();
+    });
+
+    expect(toastErrorSpy).toHaveBeenCalledTimes(1);
+    expect(String(toastErrorSpy.mock.calls[0][0])).toMatch(/may still have been accepted/i);
+
+    // No auto-retry, no print, and no local move that would make it look normal.
+    expect(acceptOrderMock).toHaveBeenCalledTimes(1);
+    expect(printBothOnAcceptMock).not.toHaveBeenCalled();
+    expect(useDashboardStore.getState().acceptedOrders).toHaveLength(0);
+  });
+
+  it("TC-I10b: a successful accept still moves the order and prints both slips", async () => {
+    acceptOrderMock.mockReturnValue({ unwrap: () => Promise.resolve({ ok: true }) });
+    useDashboardStore.setState({ pendingOrders: [order] });
+
+    const { result } = renderHook(() => usePendingOrder(order));
+    await act(async () => {
+      await result.current.handleAccept();
+    });
+
+    expect(printBothOnAcceptMock).toHaveBeenCalledTimes(1);
+    expect(useDashboardStore.getState().acceptedOrders.map((o) => o.orderId)).toEqual([
+      "QV-ACCEPT-FAIL",
+    ]);
   });
 });

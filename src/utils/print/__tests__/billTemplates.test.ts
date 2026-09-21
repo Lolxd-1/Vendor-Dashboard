@@ -41,23 +41,29 @@ const baseOrder: Order = {
 
 const makeOrder = (overrides: Partial<Order> = {}): Order => ({ ...baseOrder, ...overrides });
 
-// "Standalone token" check: PAID must not appear as its own word (avoids false
-// positives/negatives from substrings like the unconditional "Paid via <method>" line).
-const hasStandaloneToken = (text: string, token: string) => text.split(/\s+/).includes(token);
+// The one sentence on an unsettled slip that may legally contain "paid": it names
+// who owes the TAX under s.9(5), not whether this order was settled.
+const STATUTORY_TAX_NOTE = "Tax to be paid u/s 9(5) by ECO";
 
 describe("billTemplates payment status", () => {
-  it("TC9 (THE BUG): COD, not settled -> KOT has no PAID and has COLLECT", () => {
+  it("TC9 (THE BUG): COD, not settled -> KOT has no 'paid' in any casing and has COLLECT", () => {
     const order = makeOrder({ isSettled: false, paymentMethod: "COD" });
     const kot = buildKitchenKOT(order);
-    expect(kot).not.toContain("PAID");
+    expect(kot).not.toMatch(/paid/i);
     expect(kot).toContain("COLLECT");
   });
 
-  it("TC10: COD, not settled -> counter bill has no standalone PAID token and has COLLECT", () => {
+  it("TC10 (AC7): COD, not settled -> the bill's ONLY 'paid' in any casing is the tax note", () => {
     const order = makeOrder({ isSettled: false, paymentMethod: "COD" });
     const bill = buildCounterBill(order);
-    expect(hasStandaloneToken(bill, "PAID")).toBe(false);
+
+    // Enumerating every occurrence, rather than excluding known ones, is what makes
+    // this assertion hold against a line that has not been written yet.
+    const paidLines = bill.split("\n").filter((l) => /paid/i.test(l)).map((l) => l.trim());
+    expect(paidLines).toEqual([STATUTORY_TAX_NOTE]);
+
     expect(bill).toContain("COLLECT");
+    expect(bill).toContain("Pay by COD");
   });
 
   it("TC11: isSettled true -> both slips contain PAID and no COLLECT", () => {
@@ -66,6 +72,7 @@ describe("billTemplates payment status", () => {
     const kot = buildKitchenKOT(order);
     expect(bill).toContain("PAID");
     expect(kot).toContain("PAID");
+    expect(bill).toContain("Paid via COD");
     expect(bill).not.toContain("COLLECT");
     expect(kot).not.toContain("COLLECT");
   });

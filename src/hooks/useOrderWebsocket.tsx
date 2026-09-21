@@ -82,7 +82,14 @@ export const useOrderWebsocket = (): OrderSocketState => {
     }
 
     if (isTokenExpired(jwt)) {
-      clearSession();
+      // Same once-only toast as the socket-error and idle-interval paths: a
+      // vendor bounced to the login screen with no explanation cannot tell a
+      // real expiry from a PC whose clock runs fast, and just logs in again.
+      if (!expiryToastShownRef.current) {
+        expiryToastShownRef.current = true;
+        clearSession();
+        toast.error("Session expired - please log in again");
+      }
       return;
     }
 

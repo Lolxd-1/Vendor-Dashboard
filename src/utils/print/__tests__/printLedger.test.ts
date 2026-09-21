@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PRINT_TIMEOUT_MS, printTextDetailed } from "../printAgent";
 import {
+  claimPrint,
   clearPrinted,
   getOrderStamp,
   markPrinted,
   pruneLedger,
+  releasePrint,
   setOrderStamp,
   wasPrinted,
 } from "../printLedger";
@@ -179,5 +182,97 @@ describe("printLedger", () => {
 
     expect(wasPrinted("LEGACY1")).toBe(true);
     expect(getOrderStamp("LEGACY1", "acceptedAt")).toBe(iso);
+  });
+});
+
+// PLAN.md's frozen print-idempotency contract, and the test its risk matrix names
+// for AC5/R3. The check-then-act that shipped instead (wasPrinted, two awaits,
+// then markPrinted) leaves the flag unwritten across both agent round-trips.
+describe("printLedger claim/release — concurrent claim yields exactly one", () => {
+  it("TC11: two claimPrint calls for one orderId in the SAME tick yield exactly one true", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+
+    // No await between them: this is the whole window the contract has to close.
+    const results = [claimPrint("QV-1"), claimPrint("QV-1")];
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(results[0]).toBe(true);
+    expect(wasPrinted("QV-1")).toBe(true);
+  });
+
+  it("TC12: claimPrint marks the order before it returns, so a later claim is refused", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+
+    expect(claimPrint("QV-1")).toBe(true);
+    expect(claimPrint("QV-1")).toBe(false);
+    expect(claimPrint("QV-2")).toBe(true);
+  });
+
+  it("TC13 (R3): releasePrint permits a later claim, so Reprint works after a total failure", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+
+    claimPrint("QV-1");
+    releasePrint("QV-1");
+
+    expect(wasPrinted("QV-1")).toBe(false);
+    expect(claimPrint("QV-1")).toBe(true);
+  });
+
+  it("TC14 (quota-safe): a storage that always throws never lets claimPrint throw", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage({ failSetItemTimes: Infinity }));
+
+    expect(() => claimPrint("QV-1")).not.toThrow();
+    expect(() => releasePrint("QV-1")).not.toThrow();
+  });
+});
+
+// ─── C3: the client's own timeout must not manufacture a duplicate bill ───
+// Lives in this file because the two halves are one failure: an abort that routes
+// into the browser fallback also marks the order printed, so the staff confirm a
+// second copy of a bill the agent is still printing.
+
+describe("printAgent timeout budget vs the agent's own bounds", () => {
+  const abortError = () =>
+    Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+
+  // jsdom's window.open is a no-op returning null, which would make printViaBrowser
+  // report failure for the wrong reason and hide the bug. A fake window makes the
+  // fallback genuinely "succeed", exactly as it does on a vendor PC.
+  const stubWindowOpen = () => {
+    const openSpy = vi.fn(() => ({ document: { write: vi.fn(), close: vi.fn() } }));
+    vi.stubGlobal("open", openSpy);
+    return openSpy;
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("TC-C3 (THE BUG): an aborted POST /print reports failed and never opens the browser window", async () => {
+    const openSpy = stubWindowOpen();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(abortError())));
+
+    const out = await printTextDetailed("counter", "BILL TEXT");
+
+    expect(out.where).toBe("failed");
+    expect(openSpy).not.toHaveBeenCalled();
+    // Staff must be told to look at the printer, not handed a second copy to confirm.
+    expect(out.error).toMatch(/check the printer/i);
+  });
+
+  it("TC-C3b: a genuine connection failure still falls back to the browser", async () => {
+    const openSpy = stubWindowOpen();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+
+    const out = await printTextDetailed("counter", "BILL TEXT");
+
+    expect(out.where).toBe("browser");
+    expect(openSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("TC-C3c: the POST /print budget exceeds the agent's bounded worst case", () => {
+    // agent.ps1: $PrinterCallTimeoutMs = 3000 bounds the spooler call, $doc.Print()
+    // is unbounded past it, and the listener's EntityBody ceiling is 15s.
+    expect(PRINT_TIMEOUT_MS).toBeGreaterThanOrEqual(15_000);
   });
 });

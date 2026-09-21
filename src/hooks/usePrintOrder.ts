@@ -3,7 +3,7 @@ import toast from "react-hot-toast";
 import type { Order } from "../types/order";
 import { buildCounterBill, buildKitchenKOT } from "../utils/print/billTemplates";
 import { printTextDetailed, checkAgentOnline, type PrintOutcome } from "../utils/print/printAgent";
-import { wasPrinted, markPrinted, clearPrinted } from "../utils/print/printLedger";
+import { claimPrint, releasePrint } from "../utils/print/printLedger";
 
 // exp2: honest toasts. "Sent to printer" is shown ONLY when the agent
 // actually accepted the job (HTTP 200). Agent refusals surface the reason
@@ -23,7 +23,9 @@ export const usePrintOrder = () => {
 
   // Called right after Accept succeeds — prints BOTH slips in sync.
   const printBothOnAccept = async (order: Order, prepTime: number) => {
-    if (wasPrinted(order.orderId)) return;
+    // Claim BEFORE the awaits: the flag is set while this call still owns the
+    // event loop, so a second accept for the same order cannot slip in behind it.
+    if (!claimPrint(order.orderId)) return;
     setPrinting(true);
     try {
       const bill = buildCounterBill(order, prepTime);
@@ -33,16 +35,14 @@ export const usePrintOrder = () => {
         printTextDetailed("kitchen", kot),
       ]);
       if (billRes.where === "agent" && kotRes.where === "agent") {
-        markPrinted(order.orderId);
         toast.success("Bill + KOT sent to printer");
       } else if (billRes.where === "failed" && kotRes.where === "failed") {
-        // Do NOT mark printed — staff must fix + Reprint. Show the real reason.
-        clearPrinted(order.orderId);
+        // Nothing reached a printer — hand the claim back so Reprint can retry.
+        releasePrint(order.orderId);
         const reason = billRes.error || kotRes.error || "helper unreachable";
         toast.error(`Print failed: ${reason} — use Reprint`, { duration: 6000 });
       } else {
-        // Browser fallback opened — staff confirms once.
-        markPrinted(order.orderId);
+        // Browser fallback opened — staff confirms once. The claim stands.
         toast("Print window opened — confirm to print", { icon: "🖨️" });
       }
     } finally {
