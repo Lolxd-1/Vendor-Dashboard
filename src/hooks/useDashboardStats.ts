@@ -3,7 +3,7 @@ import { useGetDashboardStatsQuery } from '../apis/dashboardApi';
 import { useAuthStore } from '../stores/useAuthStore';
 
 export const useDashboardStats = () => {
-  const { shopId } = useAuthStore();
+  const shopId = useAuthStore((state) => state.shopId);
 
   // ─── FETCH BACKEND API STATS (Auto-Poll every 1 minute) ───
   const { 

@@ -38,7 +38,7 @@ const checkIsCurrentlyOfflineBySchedule = (operatingHours: any): boolean => {
 };
 
 export const StoreSchedulePage = () => {
-  const { shopId } = useAuthStore();
+  const shopId = useAuthStore((state) => state.shopId);
 
   const { data: scheduleData, isLoading } = useGetVendorScheduleQuery(shopId || "", {
     skip: !shopId

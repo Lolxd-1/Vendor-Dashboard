@@ -18,6 +18,17 @@ export default defineConfig(() => {
     build: {
       outDir: "dist",
       sourcemap: false,
+      rollupOptions: {
+        output: {
+          // Real vendor boundaries only, so the main chunk isn't one 776 kB blocker.
+          manualChunks(id: string) {
+            if (!id.includes("node_modules")) return;
+            if (/[\\/]react(-dom)?[\\/]/.test(id)) return "vendor-react";
+            if (/[\\/]@reduxjs[\\/]toolkit[\\/]/.test(id) || /[\\/]react-redux[\\/]/.test(id)) return "vendor-redux";
+            if (/[\\/]@stomp[\\/]stompjs[\\/]/.test(id) || /[\\/]sockjs-client[\\/]/.test(id)) return "vendor-socket";
+          },
+        },
+      },
     },
 
     server: {

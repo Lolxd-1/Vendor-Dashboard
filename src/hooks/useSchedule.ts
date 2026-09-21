@@ -6,7 +6,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 export type ScheduleFeedback = { type: 'success' | 'error' |'offline'; message: string } | null;
 
 export const useSchedule = () => {
-  const { shopId } = useAuthStore();
+  const shopId = useAuthStore((state) => state.shopId);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [viewAllOpen, setViewAllOpen] = useState(false);

@@ -1,4 +1,5 @@
 import { Eye, Check, AlertCircle, Printer } from "lucide-react";
+import { memo } from "react";
 import type { OrderActionEvent } from "../../types/order";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { useDashboardStore } from "../../stores/useDashboardStore";
@@ -9,16 +10,16 @@ import toast from "react-hot-toast";
 interface AcceptedOrderCardProps {
   order: OrderActionEvent;
   sequence: number;
-  onViewDetails: () => void;
+  onViewDetails: (order: OrderActionEvent) => void;
 }
 
-export const AcceptedOrderCard = ({ order, onViewDetails }: AcceptedOrderCardProps) => {
+export const AcceptedOrderCard = memo(function AcceptedOrderCard({ order, onViewDetails }: AcceptedOrderCardProps) {
   const prepTime = order.preparationTime || 15;
 
 
   const { displayTime } = useOrderTimer(order.acceptedDate || order.creationTime, "DOWN", order.preparationTime);
 
-  const { moveToReady } = useDashboardStore();
+  const moveToReady = useDashboardStore((state) => state.moveToReady);
   const [markReady, { isLoading }] = useMarkOrderReadyMutation();
   const { reprint, printing } = usePrintOrder();
 
@@ -50,7 +51,7 @@ export const AcceptedOrderCard = ({ order, onViewDetails }: AcceptedOrderCardPro
             ⏱ prep :{prepTime}min
           </span>
           <button
-            onClick={onViewDetails}
+            onClick={() => onViewDetails(order)}
             className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-500 transition-colors shrink-0">
             <Eye size={16} />
           </button>
@@ -164,4 +165,4 @@ export const AcceptedOrderCard = ({ order, onViewDetails }: AcceptedOrderCardPro
 
     </div>
   );
-};
+});

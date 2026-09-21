@@ -1,4 +1,5 @@
 import { Check, Eye, X } from "lucide-react";
+import { memo } from "react";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { usePendingOrder } from "../../hooks/usePendingOrders";
 import type { OrderActionEvent } from "../../types/order";
@@ -6,12 +7,12 @@ import type { OrderActionEvent } from "../../types/order";
 interface PendingOrderCardProps {
   order: OrderActionEvent;
   sequence: number;
-  onViewDetails: () => void;
+  onViewDetails: (order: OrderActionEvent) => void;
 }
 
 const PREP_TIMES = [5, 10, 15, 20, 25];
 
-export const PendingOrderCard = ({ order, onViewDetails }: PendingOrderCardProps) => {
+export const PendingOrderCard = memo(function PendingOrderCard({ order, onViewDetails }: PendingOrderCardProps) {
 const { displayTime } = useOrderTimer(order.creationTime, "UP");
 
   // ─── Injecting logic from our new custom hook ───
@@ -43,7 +44,7 @@ const { displayTime } = useOrderTimer(order.creationTime, "UP");
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={onViewDetails}
+            onClick={() => onViewDetails(order)}
             className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-500 transition-colors">
             <Eye size={16} />
           </button>
@@ -172,4 +173,4 @@ const { displayTime } = useOrderTimer(order.creationTime, "UP");
 
     </div>
   );
-};
+});

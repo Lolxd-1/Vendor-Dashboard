@@ -22,7 +22,8 @@ const Authentication = () => {
   const [otpDigits, setOtpDigits] = useState(["", "", "", ""]);
   const [verificationId, setVerificationId] = useState("");
 
-  const { isAuthenticated, saveSession } = useAuthStore();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const saveSession = useAuthStore((state) => state.saveSession);
   const { setTheme } = useThemeStore();
 
   const [requestOtp, { isLoading: isRequestingOtp }] = useRequestOtpMutation();

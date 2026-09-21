@@ -1,5 +1,5 @@
 import { CheckCircle, FileClock, PlayCircle, RefreshCcw, Printer } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useAuthStore } from "../stores/useAuthStore";
 import { useGetVendorOrdersQuery } from "../apis/orderApi";
@@ -20,8 +20,11 @@ import { OrderDetailsModal } from "../components/common/OrderDetailsModal";
 type TabKey = "pending" | "accepted" | "ready";
 
 const Dashboard = () => {
-  const { shopId } = useAuthStore();
-  const { pendingOrders, acceptedOrders, readyOrders, reconcile } = useDashboardStore();
+  const shopId = useAuthStore((state) => state.shopId);
+  const pendingOrders = useDashboardStore((state) => state.pendingOrders);
+  const acceptedOrders = useDashboardStore((state) => state.acceptedOrders);
+  const readyOrders = useDashboardStore((state) => state.readyOrders);
+  const reconcile = useDashboardStore((state) => state.reconcile);
 
   const { isFetching, refresh } = useDashboardStats();
 
@@ -41,6 +44,12 @@ const Dashboard = () => {
   useOrderSync(shopId, socket);
 
   const [viewOrder, setViewOrder] = useState<OrderActionEvent | null>(null);
+  // Stable across renders so React.memo on the order cards is not defeated by a fresh
+  // arrow per order per render — each card calls this with its own `order`.
+  const handleViewDetails = useCallback(
+    (order: OrderActionEvent) => setViewOrder(order),
+    []
+  );
   const [activeTab, setActiveTab] = useState<TabKey>("pending");
   const [showPrinterSetup, setShowPrinterSetup] = useState(false);
   const [printerOnline, setPrinterOnline] = useState<boolean | null>(null);
@@ -178,7 +187,7 @@ const Dashboard = () => {
               key={order.orderId}
               order={order}
               sequence={idx + 1}
-              onViewDetails={() => setViewOrder(order)}
+              onViewDetails={handleViewDetails}
             />
           ))}
         </OrderColumn>
@@ -195,7 +204,7 @@ const Dashboard = () => {
               key={order.orderId}
               order={order}
               sequence={idx + 1}
-              onViewDetails={() => setViewOrder(order)}
+              onViewDetails={handleViewDetails}
             />
           ))}
         </OrderColumn>
@@ -212,7 +221,7 @@ const Dashboard = () => {
               key={order.orderId}
               order={order}
               sequence={idx + 1}
-              onViewDetails={() => setViewOrder(order)}
+              onViewDetails={handleViewDetails}
             />
           ))}
         </OrderColumn>
@@ -267,7 +276,7 @@ const Dashboard = () => {
                     key={order.orderId}
                     order={order}
                     sequence={idx + 1}
-                    onViewDetails={() => setViewOrder(order)}
+                    onViewDetails={handleViewDetails}
                   />
                 ))
               )}
@@ -283,7 +292,7 @@ const Dashboard = () => {
                     key={order.orderId}
                     order={order}
                     sequence={idx + 1}
-                    onViewDetails={() => setViewOrder(order)}
+                    onViewDetails={handleViewDetails}
                   />
                 ))
               )}
@@ -299,7 +308,7 @@ const Dashboard = () => {
                     key={order.orderId}
                     order={order}
                     sequence={idx + 1}
-                    onViewDetails={() => setViewOrder(order)}
+                    onViewDetails={handleViewDetails}
                   />
                 ))
               )}

@@ -1,4 +1,5 @@
 import { Eye, Check, Printer } from "lucide-react";
+import { memo } from "react";
 import type { OrderActionEvent } from "../../types/order";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { useDashboardStore } from "../../stores/useDashboardStore";
@@ -9,12 +10,12 @@ import toast from "react-hot-toast";
 interface ReadyOrderCardProps {
   order: OrderActionEvent;
   sequence: number;
-  onViewDetails: () => void;
+  onViewDetails: (order: OrderActionEvent) => void;
 }
 
-export const ReadyOrderCard = ({ order, onViewDetails }: ReadyOrderCardProps) => {
+export const ReadyOrderCard = memo(function ReadyOrderCard({ order, onViewDetails }: ReadyOrderCardProps) {
   const { displayTime } = useOrderTimer(order.readyDate || order.creationTime, "UP");
-  const { removeOrder } = useDashboardStore();
+  const removeOrder = useDashboardStore((state) => state.removeOrder);
 
   const [handover, { isLoading }] = useHandoverOrderMutation();
   const { reprint, printing } = usePrintOrder();
@@ -45,7 +46,7 @@ export const ReadyOrderCard = ({ order, onViewDetails }: ReadyOrderCardProps) =>
             <span className="text-sm font-bold text-green-600 dark:text-green-500">{displayTime}</span>
           </div>
           <button
-            onClick={onViewDetails}
+            onClick={() => onViewDetails(order)}
             className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-500 transition-colors ml-1">
             <Eye size={16} />
           </button>
@@ -138,4 +139,4 @@ export const ReadyOrderCard = ({ order, onViewDetails }: ReadyOrderCardProps) =>
 
     </div>
   );
-};
+});

@@ -15,7 +15,8 @@ export const usePendingOrder = (order: Order | string) => {
   const [reasonError, setReasonError] = useState<string>("");
 
   // ─── Global Store & APIs ───
-  const { moveToAccepted, removeOrder } = useDashboardStore();
+  const moveToAccepted = useDashboardStore((state) => state.moveToAccepted);
+  const removeOrder = useDashboardStore((state) => state.removeOrder);
   const { printBothOnAccept } = usePrintOrder();
   const [acceptOrder, { isLoading: isAccepting }] = useAcceptOrderMutation();
   const [rejectOrder, { isLoading: isRejecting }] = useRejectOrderMutation();
