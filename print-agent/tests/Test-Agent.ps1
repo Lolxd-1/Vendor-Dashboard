@@ -219,6 +219,41 @@ if (($null -ne $srcBounded) -and ($null -ne $srcRunspace)) {
     Assert-That ("TC-C4e hang: a printer lookup that never returns gives the thread back in " + [int]$swHang.Elapsed.TotalSeconds + "s") ($swHang.Elapsed.TotalSeconds -lt 15) ("took " + $swHang.Elapsed.TotalSeconds + "s")
     Assert-That "TC-C4f hang: the hang is reported as a timeout, not as an empty printer list" ($script:LastSpoolerTimedOut -eq $true) "LastSpoolerTimedOut was not set"
     Assert-That "TC-C4g hang: a bounded call that times out yields no rows" ($hangRows.Count -eq 0) ("got " + $hangRows.Count + " rows")
+
+    # --- TC-C4h - Start-Sleep above can be interrupted. A call stuck inside
+    # --- native code - what a wedged spooler really looks like - cannot, and
+    # --- PowerShell's Stop()/Dispose() wait for it, so the bound must not use them.
+    $swNative = [System.Diagnostics.Stopwatch]::StartNew()
+    [void](Invoke-BoundedSpooler { [System.Threading.Thread]::Sleep(30000) } "NativeHangProbe")
+    $swNative.Stop()
+    Assert-That ("TC-C4h hang: a call stuck in native code still gives the thread back in " + [int]$swNative.Elapsed.TotalSeconds + "s") ($swNative.Elapsed.TotalSeconds -lt 15) ("took " + $swNative.Elapsed.TotalSeconds + "s")
+
+    # --- TC-C4i/j - the print itself ($doc.Print() via Print-Gdi) is bounded too,
+    # --- and a failure inside the bound keeps its own message. Print-Gdi is a
+    # --- stub here, so nothing ever reaches a real printer.
+    $anyPrinter = @(Get-Printer -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Name)
+    if (($null -ne $srcPrintText) -and ($anyPrinter.Count -eq 1)) {
+        Invoke-Expression $srcPrintText
+        function Test-IsVirtualPrinter { return $false }
+        $script:PrinterCallTimeoutMs = 10000
+        $script:PrintCallTimeoutMs = 2000
+
+        function Print-Gdi($printerName, $text) { [System.Threading.Thread]::Sleep(30000) }
+        $swPrint = [System.Diagnostics.Stopwatch]::StartNew()
+        $printErr = ""
+        try { Print-Text $anyPrinter[0] "x" } catch { $printErr = $_.Exception.Message }
+        $swPrint.Stop()
+        Assert-That ("TC-C4i hang: a print that never returns gives the thread back in " + [int]$swPrint.Elapsed.TotalSeconds + "s, as a timeout") (($swPrint.Elapsed.TotalSeconds -lt 15) -and ($printErr -match 'print timed out')) ("took " + $swPrint.Elapsed.TotalSeconds + "s, error=" + $printErr)
+
+        function Print-Gdi($printerName, $text) { throw "Printer not found: $printerName" }
+        $printErr = ""
+        try { Print-Text $anyPrinter[0] "x" } catch { $printErr = $_.Exception.Message }
+        Assert-That "TC-C4j print: an error inside the bounded print surfaces with its own message" ($printErr -eq ("Printer not found: " + $anyPrinter[0])) ("got: " + $printErr)
+
+        if ($haveVirtual) { Invoke-Expression $srcVirtual }
+    } else {
+        Write-Output "SKIP  TC-C4i/j print bound: no printer queue on this machine"
+    }
 }
 
 

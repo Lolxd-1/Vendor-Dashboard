@@ -2,6 +2,7 @@ import { useState } from "react";
 import toast from "react-hot-toast";
 import { useAcceptOrderMutation, useRejectOrderMutation } from "../apis/dashboardApi";
 import { useDashboardStore } from "../stores/useDashboardStore";
+import { markAcceptUnconfirmed } from "../utils/print/printLedger";
 import type { Order } from "../types/order";
 import { usePrintOrder } from "./usePrintOrder";
 
@@ -39,7 +40,9 @@ export const usePendingOrder = (order: Order | string) => {
     } catch (error) {
       // The backend may have committed before the reply was lost, in which case
       // the next poll files this order into Accepted looking completely normal —
-      // with no bill and no KOT. Never auto-retry or auto-print on this path.
+      // with no bill and no KOT. Never auto-retry or auto-print on this path;
+      // the stamp makes the Accepted card say so for as long as that is true.
+      markAcceptUnconfirmed(orderId);
       toast.error(
         `Failed to accept order ${orderId} — it may still have been accepted. Check the Accepted column before retrying, and Reprint from there.`,
         { duration: 8000 }

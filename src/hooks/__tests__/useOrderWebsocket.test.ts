@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import indexHtmlSource from "../../../index.html?raw";
 import dashboardLayoutSource from "../../Layout/Dashboardlayout.tsx?raw";
 import { useAuthStore } from "../../stores/useAuthStore";
-import { useDashboardStore } from "../../stores/useDashboardStore";
+import { TERMINAL_STATES, useDashboardStore } from "../../stores/useDashboardStore";
 import type { Order } from "../../types/order";
+import { wasAcceptUnconfirmed } from "../../utils/print/printLedger";
 import { FAST_MS, SLOW_MS, pickInterval } from "../useOrderSync";
 import { usePendingOrder } from "../usePendingOrders";
 import {
@@ -143,6 +144,8 @@ describe("phase parsing standardised on `||` (T03 handoff)", () => {
   it("an empty-string status with state ACCEPTED is treated as ACCEPTED, not ignored", () => {
     const token = makeToken({ exp: nowSeconds() + 3600 });
     useAuthStore.setState({ jwt: token, shopId: "SHOP-1" });
+    // Held locally first: a status-only frame may move a known order, never insert one (#11).
+    useDashboardStore.getState().addPendingOrder({ orderId: "QV-EMPTY-STATUS" } as Order);
 
     renderHook(() => useOrderWebsocket());
     const instance = FakeClient.instances[FakeClient.instances.length - 1];
@@ -355,6 +358,77 @@ describe("mount-time expiry surfaces the same toast (I8)", () => {
   });
 });
 
+// ─── #11 + terminal-set wiring: what a socket frame may do to the board ───
+
+describe("socket frames: phantom inserts and the shared terminal set", () => {
+  const connect = () => {
+    const token = makeToken({ exp: nowSeconds() + 3600 });
+    useAuthStore.setState({ jwt: token, shopId: "SHOP-1" });
+    renderHook(() => useOrderWebsocket());
+    const instance = FakeClient.instances[FakeClient.instances.length - 1];
+    act(() => {
+      instance.config.onConnect!(fakeFrame);
+    });
+    return (payload: unknown) =>
+      act(() => {
+        instance.messageHandler!({ body: JSON.stringify(payload) });
+      });
+  };
+  const allIds = () => {
+    const { pendingOrders, acceptedOrders, readyOrders } = useDashboardStore.getState();
+    return [...pendingOrders, ...acceptedOrders, ...readyOrders].map((o) => o.orderId);
+  };
+
+  it("TC-11a: a status-only PENDING frame for an unknown order inserts no card (no phantom ring)", () => {
+    const send = connect();
+    send({ orderId: "QV-PHANTOM", status: "PENDING" });
+    expect(allIds()).not.toContain("QV-PHANTOM");
+  });
+
+  it("TC-11b: the same holds for ACCEPTED / READY_FOR_PICKUP — no blank card to reprint", () => {
+    const send = connect();
+    send({ orderId: "QV-PHANTOM-A", status: "ACCEPTED" });
+    send({ orderId: "QV-PHANTOM-R", status: "READY_FOR_PICKUP" });
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-11c: a full order carrying a phase is still inserted", () => {
+    const send = connect();
+    send({ orderId: "QV-FULL", status: "PENDING", orderItem: [{ name: "Tea", itemCount: 1 }] });
+    expect(useDashboardStore.getState().pendingOrders.map((o) => o.orderId)).toEqual(["QV-FULL"]);
+  });
+
+  it("TC-11d: a status-only frame still moves an order this device already holds", () => {
+    useDashboardStore.getState().addPendingOrder({ orderId: "QV-HELD" } as Order);
+    const send = connect();
+    send({ orderId: "QV-HELD", status: "ACCEPTED" });
+    const { pendingOrders, acceptedOrders } = useDashboardStore.getState();
+    expect(pendingOrders).toHaveLength(0);
+    expect(acceptedOrders.map((o) => o.orderId)).toEqual(["QV-HELD"]);
+  });
+
+  it("TC-T1: every state in TERMINAL_STATES drops the card over the socket, whatever its casing", () => {
+    vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+    vi.spyOn(toast, "success").mockImplementation(() => "mock-id");
+    const send = connect();
+
+    for (const state of TERMINAL_STATES) {
+      for (const spelling of [state, ` ${state.toLowerCase()} `]) {
+        useDashboardStore.getState().addPendingOrder({ orderId: "QV-T" } as Order);
+        send({ orderId: "QV-T", status: spelling });
+        expect(allIds(), `${JSON.stringify(spelling)} should drop the order`).toEqual([]);
+      }
+    }
+  });
+
+  it("TC-T2: a lower-case terminal frame that carries items is dropped, never added as a new order", () => {
+    vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+    const send = connect();
+    send({ orderId: "QV-GONE", status: "cancelled", orderItem: [{ name: "Tea", itemCount: 1 }] });
+    expect(allIds()).toEqual([]);
+  });
+});
+
 // ─── I10: an accept that fails on the wire may already have committed ───
 
 describe("a failed accept never looks like a clean failure (I10)", () => {
@@ -383,6 +457,26 @@ describe("a failed accept never looks like a clean failure (I10)", () => {
     expect(acceptOrderMock).toHaveBeenCalledTimes(1);
     expect(printBothOnAcceptMock).not.toHaveBeenCalled();
     expect(useDashboardStore.getState().acceptedOrders).toHaveLength(0);
+  });
+
+  it("TC-I10j: a failed accept leaves a durable stamp the Accepted card can read; a good one does not", async () => {
+    sessionStorage.clear();
+    vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+
+    acceptOrderMock.mockReturnValue({ unwrap: () => Promise.reject(new Error("timeout")) });
+    const failed = renderHook(() => usePendingOrder(order));
+    await act(async () => {
+      await failed.result.current.handleAccept();
+    });
+    expect(wasAcceptUnconfirmed("QV-ACCEPT-FAIL")).toBe(true);
+
+    const okOrder = { orderId: "QV-ACCEPT-OK" } as Order;
+    acceptOrderMock.mockReturnValue({ unwrap: () => Promise.resolve({ ok: true }) });
+    const ok = renderHook(() => usePendingOrder(okOrder));
+    await act(async () => {
+      await ok.result.current.handleAccept();
+    });
+    expect(wasAcceptUnconfirmed("QV-ACCEPT-OK")).toBe(false);
   });
 
   it("TC-I10b: a successful accept still moves the order and prints both slips", async () => {

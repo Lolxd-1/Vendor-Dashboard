@@ -1,10 +1,11 @@
 import { Eye, Check, AlertCircle, Printer } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { OrderActionEvent } from "../../types/order";
 import { useOrderTimer } from "../../hooks/useOrderTimer";
 import { useDashboardStore } from "../../stores/useDashboardStore";
 import { useMarkOrderReadyMutation } from "../../apis/dashboardApi";
 import { usePrintOrder } from "../../hooks/usePrintOrder";
+import { markPrinted, wasAcceptUnconfirmed, wasPrinted } from "../../utils/print/printLedger";
 import toast from "react-hot-toast";
 
 interface AcceptedOrderCardProps {
@@ -22,6 +23,18 @@ export const AcceptedOrderCard = memo(function AcceptedOrderCard({ order, onView
   const moveToReady = useDashboardStore((state) => state.moveToReady);
   const [markReady, { isLoading }] = useMarkOrderReadyMutation();
   const { reprint, printing } = usePrintOrder();
+
+  // I10: this PC's accept failed on the wire but the server committed it, so the
+  // order arrived here via the poll with nothing printed. Say so until it prints.
+  const [printedHere, setPrintedHere] = useState(false);
+  const needsPrint = !printedHere && wasAcceptUnconfirmed(order.orderId) && !wasPrinted(order.orderId);
+
+  const handlePrintMissed = async () => {
+    if (await reprint(order, "both")) {
+      markPrinted(order.orderId);
+      setPrintedHere(true);
+    }
+  };
 
   // ─── Inline Action Handler (No extra hook needed) ───
   const handleMarkReady = async () => {
@@ -57,6 +70,22 @@ export const AcceptedOrderCard = memo(function AcceptedOrderCard({ order, onView
           </button>
         </div>
       </div>
+
+      {needsPrint && (
+        <div className="mb-3 rounded-lg border border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/30 p-2.5">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-red-700 dark:text-red-400">
+            <AlertCircle size={13} className="shrink-0" />
+            Bill + KOT not printed — accept was not confirmed on this PC
+          </div>
+          <button
+            onClick={handlePrintMissed}
+            disabled={printing}
+            className="mt-2 w-full flex justify-center items-center gap-1 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+          >
+            <Printer size={13} /> Print Bill + KOT
+          </button>
+        </div>
+      )}
 
       {/* Customer Info */}
       <div className="flex justify-between items-start mb-3">

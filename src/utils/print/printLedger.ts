@@ -6,7 +6,7 @@
 // zustand set() reducer with no try/catch of their own: a throw here would
 // wedge Accept/Ready forever.
 
-type StampKind = "acceptedAt" | "readyAt";
+type StampKind = "acceptedAt" | "readyAt" | "acceptFailedAt";
 
 // Legacy key names — unchanged, so data written before this ledger existed
 // is still read correctly.
@@ -16,6 +16,7 @@ const stampKey = (orderId: string, kind: StampKind) => `order_${orderId}_${kind}
 const PRINTED_RE = /^qv_printed_(.+)$/;
 const ACCEPTED_RE = /^order_(.+)_acceptedAt$/;
 const READY_RE = /^order_(.+)_readyAt$/;
+const ACCEPT_FAILED_RE = /^order_.+_acceptFailedAt$/;
 
 const safeGetItem = (key: string): string | null => {
   try {
@@ -79,6 +80,10 @@ export const pruneLedger = (maxEntries = 400): number => {
         const age = parseAge(safeGetItem(key));
         readyAgeByOrder.set(ready[1], age);
         stampEntries.push({ key, age });
+        continue;
+      }
+      if (ACCEPT_FAILED_RE.test(key)) {
+        stampEntries.push({ key, age: parseAge(safeGetItem(key)) });
         continue;
       }
       const printed = PRINTED_RE.exec(key);
@@ -157,4 +162,15 @@ export const setOrderStamp = (orderId: string, kind: StampKind, iso: string): vo
 
 export const getOrderStamp = (orderId: string, kind: StampKind): string | null => {
   return safeGetItem(stampKey(orderId, kind));
+};
+
+// I10: this PC's accept call failed, but the backend may have committed it
+// anyway — the next poll then files the order into Accepted with no bill and
+// no KOT. The Accepted card reads this to show that nothing printed here.
+export const markAcceptUnconfirmed = (orderId: string): void => {
+  setOrderStamp(orderId, "acceptFailedAt", new Date().toISOString());
+};
+
+export const wasAcceptUnconfirmed = (orderId: string): boolean => {
+  return getOrderStamp(orderId, "acceptFailedAt") !== null;
 };

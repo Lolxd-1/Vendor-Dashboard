@@ -115,6 +115,9 @@ function Test-IsVirtualPrinter($name, $driver, $port) {
 # inside the stuck native call, so closing it could itself block - and the
 # next call opens a fresh one.
 $script:PrinterCallTimeoutMs = 3000
+# The print itself gets longer: a long bill takes a moment to spool, and
+# lookup + print must still finish inside the dashboard's 20s budget.
+$script:PrintCallTimeoutMs = 10000
 $script:PrinterRunspace = $null
 # Set by Invoke-BoundedSpooler so a caller can tell "the spooler never
 # answered" from "there are no printers" - those need different replies.
@@ -123,29 +126,38 @@ $script:LastSpoolerTimedOut = $false
 function Get-PrinterRunspace() {
     if (-not $script:PrinterRunspace -or $script:PrinterRunspace.RunspaceStateInfo.State -ne 'Opened') {
         $script:PrinterRunspace = [runspacefactory]::CreateRunspace()
+        # Same apartment as the agent's own thread, so printing from here
+        # behaves exactly as it did when it ran on the request thread.
+        $script:PrinterRunspace.ApartmentState = 'STA'
         $script:PrinterRunspace.Open()
     }
     return $script:PrinterRunspace
 }
 
-function Invoke-BoundedSpooler([scriptblock] $Script, [string] $Label, [object[]] $ArgumentList) {
+function Invoke-BoundedSpooler([scriptblock] $Script, [string] $Label, [object[]] $ArgumentList, [int] $TimeoutMs = 0) {
     $script:LastSpoolerTimedOut = $false
+    if ($TimeoutMs -le 0) { $TimeoutMs = $script:PrinterCallTimeoutMs }
     $ps = [powershell]::Create()
     $ps.Runspace = Get-PrinterRunspace
+    $abandoned = $false
     try {
         [void]$ps.AddScript($Script)
         if ($ArgumentList) { foreach ($a in $ArgumentList) { [void]$ps.AddArgument($a) } }
         $async = $ps.BeginInvoke()
-        if ($async.AsyncWaitHandle.WaitOne($script:PrinterCallTimeoutMs)) {
+        if ($async.AsyncWaitHandle.WaitOne($TimeoutMs)) {
             return $ps.EndInvoke($async)
         }
-        Write-AgentLog "TIMEOUT: $Label exceeded $($script:PrinterCallTimeoutMs)ms"
-        try { $ps.Stop() } catch { }
+        Write-AgentLog "TIMEOUT: $Label exceeded ${TimeoutMs}ms"
+        # Stop() and Dispose() both wait for the pipeline to finish, and a call
+        # stuck inside the spooler never does - they would wedge this thread
+        # all over again. Ask it to stop without waiting and leave it behind.
+        try { [void]$ps.BeginStop($null, $null) } catch { }
+        $abandoned = $true
         $script:PrinterRunspace = $null
         $script:LastSpoolerTimedOut = $true
         return @()
     } finally {
-        try { $ps.Dispose() } catch { }
+        if (-not $abandoned) { try { $ps.Dispose() } catch { } }
     }
 }
 
@@ -272,7 +284,27 @@ function Print-Text($printerName, $text) {
         try { Get-Content -LiteralPath $tmp -Raw | Out-Printer -Name $printerName }
         finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
     } else {
-        Print-Gdi $printerName $text
+        # $doc.Print() waits on the spooler just like the lookup above, so it
+        # is bounded the same way. The runspace shares none of this script's
+        # functions, so the two it needs travel with it as source.
+        $defs = (Get-Command Print-Gdi).ScriptBlock.Ast.Extent.Text + "`n" + (Get-Command Get-PageBreaks).ScriptBlock.Ast.Extent.Text
+        try {
+            [void](Invoke-BoundedSpooler {
+                param($defs, $name, $body)
+                # Without this a failed Print() is a non-terminating error, the
+                # script carries on, and the dashboard is told "ok".
+                $ErrorActionPreference = 'Stop'
+                . ([scriptblock]::Create($defs))
+                Print-Gdi $name $body
+            } "Print" @($defs, $printerName, $text) $script:PrintCallTimeoutMs)
+        } catch {
+            # EndInvoke wraps the real reason ("Printer not found: X").
+            $e = $_.Exception
+            while ($e.InnerException) { $e = $e.InnerException }
+            throw $e.Message
+        }
+        # The job may still come out once the spooler recovers.
+        if ($script:LastSpoolerTimedOut) { throw "print timed out - check the printer before reprinting" }
     }
 }
 

@@ -5,7 +5,7 @@ import { toast } from 'react-hot-toast';
 import SockJS from "sockjs-client";
 import { baseurl } from "../apis";
 import { isTokenExpired, useAuthStore } from "../stores/useAuthStore";
-import { normalisePhase, useDashboardStore } from "../stores/useDashboardStore";
+import { isTerminalState, normalisePhase, useDashboardStore } from "../stores/useDashboardStore";
 
 // ✅ Validator for new orders
 const isValidOrder = (data: any): boolean => {
@@ -137,7 +137,18 @@ export const useOrderWebsocket = (): OrderSocketState => {
             // terminal, unknown, or a brand new order (handled further down).
             const phase = normalisePhase(data.status || data.state);
 
-            if (phase) {
+            // A status-only frame can move an order this device already holds, but must
+            // never INSERT one: with no items it would be a blank card that rings, and
+            // accepting it prints a blank bill. The next REST poll brings the full order.
+            const { pendingOrders, acceptedOrders, readyOrders } = useDashboardStore.getState();
+            const known = [pendingOrders, acceptedOrders, readyOrders].some(
+              (list) => list.some((o) => o.orderId === data.orderId)
+            );
+
+            if (phase && !known && !isValidOrder(data)) {
+              // Ignored on purpose — see above.
+            }
+            else if (phase) {
               upsertOrder(data, phase);
 
               if (phase === "ACCEPTED") {
@@ -153,28 +164,32 @@ export const useOrderWebsocket = (): OrderSocketState => {
                 });
               }
             }
-            else if (currentStatus === "REJECTED") {
+            // Same set (and normalisation) reconcile uses, so the socket and the REST
+            // poll can never disagree about which states drop an order.
+            else if (isTerminalState(currentStatus)) {
               removeOrder(data.orderId);
-              toast.error(`${data.orderId} : Order Rejected`, {
-                icon: <XCircle className="text-rose-500 w-6 h-6" />,
-                className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:bg-zinc-900 dark:text-white",
-              });
-            }
-            else if (currentStatus === "CANCELLED") {
-              removeOrder(data.orderId);
-              toast.error(`Order #${data.orderId} was Cancelled by Customer`, {
-                duration: 5000,
-                position: "top-center",
-                icon: <XCircle className="text-rose-500 w-6 h-6" />,
-                className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(239,68,68,0.15)] dark:bg-zinc-900 dark:text-white",
-              });
-            }
-            else if (currentStatus === "COMPLETED") {
-              removeOrder(data.orderId);
-              toast.success(`${data.orderId} : Order Handed Over to Rider`, {
-                icon: <CheckCircle className="text-emerald-500 w-6 h-6" />,
-                className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(16,185,129,0.15)] dark:bg-zinc-900 dark:text-white",
-              });
+              const terminal = String(currentStatus).trim().toUpperCase();
+
+              if (terminal === "REJECTED") {
+                toast.error(`${data.orderId} : Order Rejected`, {
+                  icon: <XCircle className="text-rose-500 w-6 h-6" />,
+                  className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.15)] dark:bg-zinc-900 dark:text-white",
+                });
+              }
+              else if (terminal === "CANCELLED") {
+                toast.error(`Order #${data.orderId} was Cancelled by Customer`, {
+                  duration: 5000,
+                  position: "top-center",
+                  icon: <XCircle className="text-rose-500 w-6 h-6" />,
+                  className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(239,68,68,0.15)] dark:bg-zinc-900 dark:text-white",
+                });
+              }
+              else if (terminal === "COMPLETED") {
+                toast.success(`${data.orderId} : Order Handed Over to Rider`, {
+                  icon: <CheckCircle className="text-emerald-500 w-6 h-6" />,
+                  className: "bg-white text-black font-bold p-4 rounded-xl shadow-[0_4px_20px_rgba(16,185,129,0.15)] dark:bg-zinc-900 dark:text-white",
+                });
+              }
             }
 
             else if (isValidOrder(data)) {

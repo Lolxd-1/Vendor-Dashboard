@@ -64,7 +64,8 @@ export const usePrintOrder = () => {
     }
   };
 
-  const reprint = async (order: Order, kind: "bill" | "kot" | "both" = "both") => {
+  // Resolves true when every requested slip got out (agent or browser window).
+  const reprint = async (order: Order, kind: "bill" | "kot" | "both" = "both"): Promise<boolean> => {
     setPrinting(true);
     try {
       const done: { label: string; out: PrintOutcome }[] = [];
@@ -90,6 +91,7 @@ export const usePrintOrder = () => {
           { duration: 6000 }
         );
       }
+      return failed.length === 0;
     } finally {
       setPrinting(false);
     }

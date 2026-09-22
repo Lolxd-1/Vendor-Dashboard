@@ -393,3 +393,40 @@ describe("usePrintOrder.printBothOnAccept — partial outcomes and claim orderin
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+// I10: the Accepted card's "Print Bill + KOT" clears its marker only when this
+// resolves true, so it must be false whenever any slip failed.
+describe("usePrintOrder.reprint — reports whether every slip got out", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  const run = async (fail: string | null) => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    savePrinterSettings({ counterPrinter: "Counter1", kitchenPrinter: "Kitchen1", agentPort: 1818 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: { body: string }) => {
+        const { printer } = JSON.parse(init.body);
+        if (printer === fail) return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve("print failed: jam") } as Response);
+        return Promise.resolve({ ok: true } as Response);
+      })
+    );
+    const { result } = renderHook(() => usePrintOrder());
+    let out: boolean | undefined;
+    await act(async () => {
+      out = await result.current.reprint(makeOrder("QV-RP"), "both");
+    });
+    return out;
+  };
+
+  it("TC-RP1: both slips out → true", async () => {
+    expect(await run(null)).toBe(true);
+  });
+
+  it("TC-RP2: KOT failed → false", async () => {
+    expect(await run("Kitchen1")).toBe(false);
+  });
+});
