@@ -224,7 +224,9 @@ function Print-Gdi($printerName, $text) {
     # GDI monospace: Courier New 8pt so 42 cols = one line on 80mm TM-T82X.
     # (Out-Printer uses proportional font and collapses 42 cols into ~24.)
     $lines = @($text -split "\r?\n")
-    $font = New-Object System.Drawing.Font('Courier New', 8.0, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+    # Bold: Regular's strokes are ~1 dot wide on a 203dpi head and print faint.
+    # Same advance width as Regular, so 42 cols still measure 71.1mm.
+    $font = New-Object System.Drawing.Font('Courier New', 8.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
     $doc = $null
     try {
         $brush = [System.Drawing.Brushes]::Black
@@ -237,6 +239,9 @@ function Print-Gdi($printerName, $text) {
         $state = @{ lines = $lines; font = $font; brush = $brush; page = 0; breaks = $null }
         $doc.add_PrintPage({
             param($sender, $e)
+            # A thermal head prints a dot or nothing: anti-aliased grey edges get
+            # dithered into speckle, so draw every glyph pixel solid black.
+            $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
             $lh = $state.font.GetHeight($e.Graphics)
             # Line height needs a real page Graphics, so the map is built on the
             # first page and reused: one job, one font, one paper size.
