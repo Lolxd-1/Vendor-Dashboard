@@ -11,9 +11,11 @@ export default defineConfig(() => {
       global: "window",
     },
 
-    // Relative base so `dist/` works from any HTTP origin/subpath
-    // (e.g. http://prd.quickverse.in/vendor/) with no HTTPS requirement.
-    base: "./",
+    // Absolute, never "./": with a relative base, a deep link or refresh on
+    // /vendor/dashboard asks for /vendor/assets/*.js, the SPA rewrite answers
+    // with index.html, and the dashboard renders blank. The router has no
+    // basename, so the app only runs at a domain root anyway.
+    base: "/",
 
     build: {
       outDir: "dist",
