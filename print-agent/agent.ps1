@@ -1,4 +1,4 @@
-﻿# QuickVerse Print Agent v1.3.3 - pure PowerShell, ZERO installs.
+﻿# QuickVerse Print Agent v1.3.4 - pure PowerShell, ZERO installs.
 # Runs on any Windows 10/11 out of the box. No Node, no npm, no exe.
 # Listens only on http://127.0.0.1:1818 - unreachable from network.
 # Dashboard calls: POST http://127.0.0.1:1818/print  { printer, text }
@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$AGENT_VERSION = "1.3.3"
+$AGENT_VERSION = "1.3.4"
 
 # T09: dashboard-only CORS. If the dashboard is ever served from a new
 # domain, this is the single place to update.
@@ -221,44 +221,66 @@ function Get-PageBreaks([string[]] $lines, [double] $lineHeight, [double] $pageH
 }
 
 function Print-Gdi($printerName, $text) {
-    # GDI monospace: Courier New 8pt so 42 cols = one line on 80mm TM-T82X.
-    # (Out-Printer uses proportional font and collapses 42 cols into ~24.)
+    # GDI monospace, one line per slip line. (Out-Printer uses a proportional
+    # font and collapses the columns.) The font is sized on the first page so
+    # the widest line (never counted below 36 cols) fits the printer's OWN
+    # printable width, capped at 68mm inside the 72mm head of an 80mm roll -
+    # a fixed size clipped the last column ("Amoun", "Deliver").
     # A line starting with char 14 (ESC/POS "SO", double width) is a heading:
     # drawn double size and centred. A blank slot follows it so the page-break
     # maths, which counts normal lines, still reserves its double height.
     $big = [string][char]14
     $lines = @()
+    $cols = 36
     foreach ($l in @($text -split "\r?\n")) {
         $lines += $l
         if ($l.StartsWith($big)) { $lines += "" }
+        elseif ($l.Length -gt $cols) { $cols = $l.Length }
     }
-    # Bold: Regular's strokes are ~1 dot wide on a 203dpi head and print faint.
-    # Same advance width as Regular, so 42 cols still measure 71.1mm.
-    $font = New-Object System.Drawing.Font('Courier New', 8.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
-    $bigFont = New-Object System.Drawing.Font('Courier New', 16.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
-    # Typographic = the font's true 4.8pt advance. The default format pads every
-    # glyph and pushed column 42 out to 73.4mm, past the 72mm the head prints.
+    # Consolas Bold: far heavier strokes and taller letters than Courier New,
+    # which printed faint on the 203dpi head even in bold. Every Windows 10/11
+    # has it; GDI+ would silently swap in a proportional font if it were
+    # missing, so fall back to Courier New explicitly.
+    $family = 'Consolas'
+    $probe = New-Object System.Drawing.Font($family, 10.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+    if ($probe.Name -ne $family) { $family = 'Courier New' }
+    $probe.Dispose()
+    # Typographic = the font's true advance. The default format pads every
+    # glyph and pushes the last column past the edge.
     $fmt = [System.Drawing.StringFormat]::GenericTypographic
+    $state = @{ lines = $lines; family = $family; cols = $cols; font = $null; bigFont = $null; fmt = $fmt; big = $big; brush = [System.Drawing.Brushes]::Black; page = 0; breaks = $null }
     $doc = $null
     try {
-        $brush = [System.Drawing.Brushes]::Black
         $doc = New-Object System.Drawing.Printing.PrintDocument
         $doc.PrinterSettings.PrinterName = $printerName
         if (-not $doc.PrinterSettings.IsValid) { throw "Printer not found: $printerName" }
         $doc.DocumentName = 'QuickVerse Bill'
         $doc.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize('80mm', 315, 2000)
         $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(5, 5, 5, 5)
-        $state = @{ lines = $lines; font = $font; bigFont = $bigFont; fmt = $fmt; big = $big; brush = $brush; page = 0; breaks = $null }
         $doc.add_PrintPage({
             param($sender, $e)
             # A thermal head prints a dot or nothing: anti-aliased grey edges get
             # dithered into speckle, so draw every glyph pixel solid black.
             $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
-            # Double-strike: a second pass one printer dot to the right (what
-            # ESC/POS "emphasized" does). Bold alone still printed faint.
-            $dot = 100.0 / $e.Graphics.DpiX
+            # Double-strike (a second pass one printer dot to the right, what
+            # ESC/POS "emphasized" does) only for thin Courier New: on Consolas
+            # Bold it fills in "m" and "0" solid.
+            $dot = 0
+            if ($state.family -eq 'Courier New') { $dot = 100.0 / $e.Graphics.DpiX }
             $origin = New-Object System.Drawing.PointF(0, 0)
-            $span = $e.Graphics.MeasureString(('0' * 42), $state.font, $origin, $state.fmt).Width
+            if ($null -eq $state.font) {
+                # Units are 1/100 inch: 268 = 68mm, 8 = 2mm spare at the edge.
+                $target = 268
+                $avail = $e.PageSettings.PrintableArea.Width - 8
+                if ($avail -gt 100 -and $avail -lt $target) { $target = $avail }
+                $f10 = New-Object System.Drawing.Font($state.family, 10.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+                $w10 = $e.Graphics.MeasureString(('0' * $state.cols), $f10, $origin, $state.fmt).Width
+                $f10.Dispose()
+                $size = 10.0 * $target / $w10
+                $state.font = New-Object System.Drawing.Font($state.family, $size, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+                $state.bigFont = New-Object System.Drawing.Font($state.family, ($size * 2), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+            }
+            $span = $e.Graphics.MeasureString(('0' * $state.cols), $state.font, $origin, $state.fmt).Width
             $lh = $state.font.GetHeight($e.Graphics)
             # Line height needs a real page Graphics, so the map is built on the
             # first page and reused: one job, one font, one paper size.
@@ -274,12 +296,12 @@ function Print-Gdi($printerName, $text) {
                 $f = $state.font
                 $x = 0
                 if ($ln.StartsWith($state.big)) {
-                    $ln = $ln.Substring(1)
+                    $ln = $ln.Substring(1).Trim()
                     $f = $state.bigFont
                     $x = [Math]::Max(0, ($span - $e.Graphics.MeasureString($ln, $f, $origin, $state.fmt).Width) / 2)
                 }
                 $e.Graphics.DrawString($ln, $f, $state.brush, $x, $y, $state.fmt)
-                $e.Graphics.DrawString($ln, $f, $state.brush, $x + $dot, $y, $state.fmt)
+                if ($dot -gt 0) { $e.Graphics.DrawString($ln, $f, $state.brush, $x + $dot, $y, $state.fmt) }
                 $y += $lh
             }
             $state.page = $state.page + 1
@@ -289,8 +311,8 @@ function Print-Gdi($printerName, $text) {
         $doc.Print()
     } finally {
         if ($doc) { $doc.Dispose() }
-        $font.Dispose()
-        $bigFont.Dispose()
+        if ($state.font) { $state.font.Dispose() }
+        if ($state.bigFont) { $state.bigFont.Dispose() }
         $fmt.Dispose()
     }
 }

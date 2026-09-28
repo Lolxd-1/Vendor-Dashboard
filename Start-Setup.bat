@@ -1,5 +1,5 @@
 @echo off
-title QuickVerse Shop Setup v1.3.3
+title QuickVerse Shop Setup v1.3.4
 echo QuickVerse 2-min shop setup...
 echo Dashboard: https://vendor-dashboard-quickverse.vercel.app/
 echo.

@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.3.3 (EPSON TM-T82X, no Node).
+    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.3.4 (EPSON TM-T82X, no Node).
 
 .DESCRIPTION
     One guy, 2 mins per shop, zero cost:
       1. Verifies Epson/thermal printer queue exists (warns with driver hint if not)
       2. Installs print-agent to C:\QuickVerse\print-agent (copies server.js + launchers)
       3. Registers Task Scheduler at logon (hidden, reliable) + Startup VBS fallback
-      4. Starts agent now, verifies /status v1.3.3 + /printers
+      4. Starts agent now, verifies /status v1.3.4 + /printers
       5. Reuses Install-VendorDashboard.ps1 steps: Chrome --app shortcut, autoplay policy, NoSleep
       6. Prints 42-col self-test slip + PASS/FAIL checklist
 
@@ -37,7 +37,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ExpectedAgentVersion = "1.3.3"
+$ExpectedAgentVersion = "1.3.4"
 function Write-Step ($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Ok ($m) { Write-Host "    [ok]   $m" -ForegroundColor Green }
 function Write-Warn2 ($m) { Write-Host "    [warn] $m" -ForegroundColor Yellow }
@@ -81,6 +81,14 @@ if ($printers -contains $ExpectedPrinter) {
 
 # -- 2. Install agent files --
 Write-Step "Installing print agent to $AgentDest"
+# A running agent keeps port 1818, so the new copy would exit "Already running"
+# and the OLD version would keep printing. Stop it before replacing the files.
+try { Stop-ScheduledTask -TaskName "QuickVerse Print Agent" -ErrorAction SilentlyContinue } catch {}
+try {
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -match 'agent\.ps1' -and $_.ProcessId -ne $PID } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Ok "Stopped running agent (pid $($_.ProcessId))" }
+} catch { Write-Warn2 "Could not stop a running agent: $($_.Exception.Message)" }
 New-Item -ItemType Directory -Path $AgentDest -Force | Out-Null
 Copy-Item (Join-Path $AgentSource "agent.ps1") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "start-agent.bat") $AgentDest -Force

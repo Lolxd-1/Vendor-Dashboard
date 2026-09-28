@@ -1,6 +1,6 @@
 @echo off
 title QuickVerse Print Agent
-echo Starting QuickVerse Print Agent v1.3.3 (pure PowerShell, no Node needed)...
+echo Starting QuickVerse Print Agent v1.3.4 (pure PowerShell, no Node needed)...
 echo Folder: %~dp0
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0agent.ps1"
 echo.

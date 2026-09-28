@@ -3,44 +3,44 @@ import { line, center, row, wrap, money, formatDateTime } from "../receiptFormat
 
 describe("receiptFormat", () => {
   // TC1
-  it("line() returns exactly 42 dashes by default", () => {
-    expect(line()).toBe("-".repeat(42));
-    expect(line()).toHaveLength(42);
+  it("line() returns exactly 36 dashes by default", () => {
+    expect(line()).toBe("-".repeat(36));
+    expect(line()).toHaveLength(36);
   });
 
-  it("line(ch) repeats the given character 42 times", () => {
-    expect(line("=")).toBe("=".repeat(42));
-    expect(line("=")).toHaveLength(42);
+  it("line(ch) repeats the given character 36 times", () => {
+    expect(line("=")).toBe("=".repeat(36));
+    expect(line("=")).toHaveLength(36);
   });
 
   // TC2
-  it("center() centres short text within 42 columns", () => {
+  it("center() centres short text within 36 columns", () => {
     const result = center("Bill");
-    expect(result).toBe(" ".repeat(19) + "Bill");
-    expect(result).toHaveLength(23);
+    expect(result).toBe(" ".repeat(16) + "Bill");
+    expect(result).toHaveLength(20);
   });
 
-  it("center() with a 60-char string returns exactly 42 chars and does not throw", () => {
+  it("center() with a 60-char string returns exactly 36 chars and does not throw", () => {
     const longText = "X".repeat(60);
     expect(() => center(longText)).not.toThrow();
     const result = center(longText);
-    expect(result).toHaveLength(42);
-    expect(result).toBe("X".repeat(42));
+    expect(result).toHaveLength(36);
+    expect(result).toBe("X".repeat(36));
   });
 
   // TC3
-  it('row("a","b") is exactly 42 chars', () => {
+  it('row("a","b") is exactly 36 chars', () => {
     const result = row("a", "b");
-    expect(result).toHaveLength(42);
-    expect(result).toBe("a" + " ".repeat(40) + "b");
+    expect(result).toHaveLength(36);
+    expect(result).toBe("a" + " ".repeat(34) + "b");
   });
 
-  it("row() truncates to exactly 42 chars when left+right exceed 42", () => {
+  it("row() truncates to exactly 36 chars when left+right exceed 36", () => {
     const left = "a".repeat(25);
     const right = "b".repeat(25);
     const result = row(left, right);
-    expect(result).toHaveLength(42);
-    expect(result).toBe((left + " " + right).slice(0, 42));
+    expect(result).toHaveLength(36);
+    expect(result).toBe((left + " " + right).slice(0, 36));
   });
 
   // TC4

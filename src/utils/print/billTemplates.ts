@@ -56,15 +56,31 @@ export const paymentLabel = (
 // Item table laid out like the reference slip: fixed right-aligned
 // Qty / Price / Amount columns, the name wraps on the left and the numbers
 // sit on the item's first line.
-const NAME_W = COLS - 22; // 20 name + 4 qty + 9 price + 9 amount = 42
+const NAME_W = COLS - 21; // 15 name + 4 qty + 8 price + 9 amount = 36
 const itemCols = (name: string, qty: string, price: string, amount: string) =>
-  name.padEnd(NAME_W) + qty.padStart(4) + price.padStart(9) + amount.padStart(9);
+  name.padEnd(NAME_W) + qty.padStart(4) + price.padStart(8) + amount.padStart(9);
 
-const itemTable = (items: Order["orderItem"]): string[] => {
+// The backend sometimes sends an item with no itemPrice. When exactly one line
+// is missing it, its amount is whatever the sub total leaves after the priced
+// lines (a single-item order: the whole sub total). More than one missing
+// line cannot be split honestly, so those stay "--".
+const lineAmounts = (items: Order["orderItem"], subTotal: number): (number | null)[] => {
+  const amounts = items.map((it) => (it.itemPrice ? it.itemPrice * it.itemCount : null));
+  const missing = amounts.filter((a) => a === null).length;
+  if (missing === 1) {
+    const rest = subTotal - amounts.reduce<number>((s, a) => s + (a ?? 0), 0);
+    if (rest > 0) return amounts.map((a) => a ?? rest);
+  }
+  return amounts;
+};
+
+const itemTable = (items: Order["orderItem"], subTotal: number): string[] => {
   const L = [itemCols("Item", "Qty.", "Price", "Amount"), line("-")];
-  items.forEach((it) => {
-    const amt = it.itemPrice ? money(it.itemPrice * it.itemCount) : "--";
-    const price = it.itemPrice ? money(it.itemPrice) : "--";
+  const amounts = lineAmounts(items, subTotal);
+  items.forEach((it, i) => {
+    const a = amounts[i];
+    const amt = a !== null ? money(a) : "--";
+    const price = a !== null && it.itemCount ? money(a / it.itemCount) : "--";
     // A single word longer than the column is cut into pieces, never overflows it.
     const nameLines = wrap(it.name || "Item", NAME_W - 1).flatMap(
       (nl) => nl.match(new RegExp(`.{1,${NAME_W - 1}}`, "g")) || [""]
@@ -75,6 +91,16 @@ const itemTable = (items: Order["orderItem"]): string[] => {
   });
   return L;
 };
+
+// Backend sends "DELIVERY"; print it as "Delivery".
+const fulfillment = (order: Order) => {
+  const f = order.fulfillmentOption || "Delivery";
+  return f.charAt(0).toUpperCase() + f.slice(1).toLowerCase();
+};
+
+// Total Qty + Sub Total, the amount under the Amount column.
+const totalsRow = (totalQty: number, subTotal: number) =>
+  row(`Total Qty: ${totalQty}`, `Sub Total${money(subTotal).padStart(9)}`);
 
 // ─── 1. COUNTER MAIN BILL — full record, with prices (taxes included) ───
 export const buildCounterBill = (order: Order, prepTime?: number): string => {
@@ -96,21 +122,15 @@ export const buildCounterBill = (order: Order, prepTime?: number): string => {
   L.push(line());
   L.push(center(payment.headline));
   L.push(`Order: ${order.orderId}`);
-  L.push(row(`Bill No.: ${billNo}`, order.fulfillmentOption || "Delivery"));
+  L.push(row(`Bill No.: ${billNo}`, fulfillment(order)));
   L.push(`Date: ${dateStr}`);
   if (prep) L.push(`Prep Time: ${prep} min`);
   L.push(line());
-  itemTable(items).forEach((l) => L.push(l));
+  itemTable(items, subTotal).forEach((l) => L.push(l));
 
   L.push(line());
-  L.push(row(`Total Qty: ${totalQty}`, `Sub Total${money(subTotal).padStart(9)}`));
+  L.push(totalsRow(totalQty, subTotal));
   L.push(row("Grand Total", `Rs ${money(order.invoiceAmount || subTotal)}`));
-  if (payment.collect !== null) L.push(center(`*** COLLECT Rs ${money(payment.collect)} ***`));
-  // AC7: the method line must never read as a payment claim on a COD bill —
-  // directly under "COLLECT Rs 320" it is what makes staff hand the bag over
-  // without taking the cash. paymentLabel already decides COD vs prepaid.
-  const method = order.paymentMethod || "Online";
-  L.push(payment.headline === "PREPAID" ? `Paid via ${method}` : `Pay by ${method}`);
   L.push(line());
   L.push(center(`OTP: ${riderOtp(order.orderId)}`));
   L.push(center("Show this to rider"));
@@ -128,24 +148,20 @@ export const buildKitchenKOT = (order: Order, prepTime?: number): string => {
   const L: string[] = [];
   const items = order.orderItem || [];
   const totalQty = items.reduce((a, i) => a + (i.itemCount || 0), 0);
+  const subTotal = order.amountExcludingDeliveryFee ?? order.totalAmount ?? 0;
 
   L.push(center("*** KITCHEN KOT - QuickVerse ***"));
   L.push(center(shop.name));
   L.push(line("="));
   L.push(center(`ORDER: ${order.orderId}`));
-  L.push(center(`${formatDateTime(order.creationTime)}  ${order.fulfillmentOption || "Delivery"}`));
-  // One amount line: COD -> what to collect, otherwise the status + final amount.
-  const payment = paymentLabel(order);
-  const finalAmount = order.invoiceAmount ?? order.totalAmount ?? 0;
-  L.push(center(payment.collect !== null ? `COLLECT Rs ${money(payment.collect)}` : `${payment.headline} Rs ${money(finalAmount)}`));
+  L.push(center(`${formatDateTime(order.creationTime)}  ${fulfillment(order)}`));
   if (prepTime || order.preparationTime) L.push(center(`Prep: ${prepTime ?? order.preparationTime} min`));
   L.push(line("="));
 
-  itemTable(items).forEach((l) => L.push(l));
+  itemTable(items, subTotal).forEach((l) => L.push(l));
 
   L.push(line());
-  L.push(row(`Total Qty: ${totalQty}`, `Rs ${money(order.amountExcludingDeliveryFee ?? order.totalAmount)}`));
-  L.push(`Customer: ${order.customerName || "--"}`);
+  L.push(totalsRow(totalQty, subTotal));
   L.push(line());
   L.push(center(`Match Bill No.: ${shortId(order.orderId)}`));
   L.push("");

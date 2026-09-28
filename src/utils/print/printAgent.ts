@@ -18,7 +18,7 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.3.3";
+export const REQUIRED_AGENT_VERSION = "1.3.4";
 
 // exp1: real vs virtual queue detection.
 // Agent v1.3 returns { printers, real, detail }. Older agents return only { printers }.
@@ -209,7 +209,7 @@ export const printViaBrowser = (title: string, text: string) => {
   const esc = text
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     // Heading marker -> big centred line.
-    .replace(new RegExp(`^${BIG}(.*)\\n?`, "gm"), '<div class="big">$1</div>');
+    .replace(new RegExp(`^${BIG}\\s*(.*)\\n?`, "gm"), '<div class="big">$1</div>');
   w.document.write(`<html><head><title>${title}</title><style>
     @page { size: 80mm auto; margin: 0; }
     body { width: 80mm; margin: 0; padding: 4mm; font-family: monospace; font-size: 12px; font-weight: bold; white-space: pre-wrap; color: #000; }
