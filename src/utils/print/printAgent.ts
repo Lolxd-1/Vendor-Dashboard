@@ -2,6 +2,8 @@
 // correct printer by name, shares Windows queue with PetPooja).
 // Falls back to browser print (80mm window) if agent is not installed.
 
+import { BIG } from "./receiptFormat";
+
 export interface PrinterSettings {
   counterPrinter: string;
   kitchenPrinter: string;
@@ -16,7 +18,7 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.3.2";
+export const REQUIRED_AGENT_VERSION = "1.3.3";
 
 // exp1: real vs virtual queue detection.
 // Agent v1.3 returns { printers, real, detail }. Older agents return only { printers }.
@@ -204,10 +206,14 @@ export const checkAgentOnline = async (): Promise<boolean> => {
 export const printViaBrowser = (title: string, text: string) => {
   const w = window.open("", "_blank", "width=320,height=600");
   if (!w) return false;
-  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const esc = text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    // Heading marker -> big centred line.
+    .replace(new RegExp(`^${BIG}(.*)\\n?`, "gm"), '<div class="big">$1</div>');
   w.document.write(`<html><head><title>${title}</title><style>
     @page { size: 80mm auto; margin: 0; }
-    body { width: 80mm; margin: 0; padding: 4mm; font-family: monospace; font-size: 12px; white-space: pre-wrap; color: #000; }
+    body { width: 80mm; margin: 0; padding: 4mm; font-family: monospace; font-size: 12px; font-weight: bold; white-space: pre-wrap; color: #000; }
+    .big { font-size: 24px; text-align: center; }
   </style></head><body>${esc}<scr` + `ipt>window.onload=()=>{window.print();}</scr` + `ipt></body></html>`);
   w.document.close();
   return true;

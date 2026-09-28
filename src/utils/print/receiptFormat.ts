@@ -6,6 +6,11 @@ export const COLS = 42;
 
 export const line = (ch = "-") => ch.repeat(COLS);
 
+// Heading marker: a line starting with char 14 (ESC/POS "SO", double width) is
+// printed double size and centred by the print agent / browser fallback.
+export const BIG = "\u000E";
+export const big = (text: string) => BIG + text;
+
 export const center = (text: string) => {
   const t = text.length >= COLS ? text.slice(0, COLS) : text;
   const pad = Math.floor((COLS - t.length) / 2);

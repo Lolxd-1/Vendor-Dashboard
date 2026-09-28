@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildCounterBill, buildKitchenKOT, paymentLabel } from "../billTemplates";
-import { COLS } from "../receiptFormat";
+import { BIG, COLS } from "../receiptFormat";
 import type { Order, OrderItem } from "../../../types/order";
 
 const baseOrder: Order = {
@@ -41,10 +41,6 @@ const baseOrder: Order = {
 
 const makeOrder = (overrides: Partial<Order> = {}): Order => ({ ...baseOrder, ...overrides });
 
-// The one sentence on an unsettled slip that may legally contain "paid": it names
-// who owes the TAX under s.9(5), not whether this order was settled.
-const STATUTORY_TAX_NOTE = "Tax to be paid u/s 9(5) by ECO";
-
 describe("billTemplates payment status", () => {
   it("TC9 (THE BUG): COD, not settled -> KOT has no 'paid' in any casing and has COLLECT", () => {
     const order = makeOrder({ isSettled: false, paymentMethod: "COD" });
@@ -53,42 +49,42 @@ describe("billTemplates payment status", () => {
     expect(kot).toContain("COLLECT");
   });
 
-  it("TC10 (AC7): COD, not settled -> the bill's ONLY 'paid' in any casing is the tax note", () => {
+  it("TC10 (AC7): COD, not settled -> the bill never says 'paid' in any casing", () => {
     const order = makeOrder({ isSettled: false, paymentMethod: "COD" });
     const bill = buildCounterBill(order);
 
     // Enumerating every occurrence, rather than excluding known ones, is what makes
     // this assertion hold against a line that has not been written yet.
     const paidLines = bill.split("\n").filter((l) => /paid/i.test(l)).map((l) => l.trim());
-    expect(paidLines).toEqual([STATUTORY_TAX_NOTE]);
+    expect(paidLines).toEqual([]);
 
     expect(bill).toContain("COLLECT");
     expect(bill).toContain("Pay by COD");
   });
 
-  it("TC11: isSettled true -> both slips contain PAID and no COLLECT", () => {
+  it("TC11: COD is decided by method, even when settled -> COD + COLLECT on both slips", () => {
     const order = makeOrder({ isSettled: true, paymentMethod: "COD" });
     const bill = buildCounterBill(order);
     const kot = buildKitchenKOT(order);
-    expect(bill).toContain("PAID");
-    expect(kot).toContain("PAID");
-    expect(bill).toContain("Paid via COD");
-    expect(bill).not.toContain("COLLECT");
-    expect(kot).not.toContain("COLLECT");
+    expect(paymentLabel(order)).toEqual({ headline: "COD", collect: 320 });
+    expect(bill.split("\n").map((l) => l.trim())).toContain("COD");
+    expect(bill).toContain("COLLECT Rs 320.00");
+    expect(kot).toContain("COLLECT Rs 320.00");
+    expect(bill).not.toMatch(/prepaid/i);
+    expect(kot).not.toMatch(/prepaid/i);
   });
 
-  it("TC12: not settled, Online -> headline is PAYMENT: ONLINE, no COLLECT, no PAID claim", () => {
+  it("TC12: Online -> PREPAID on both slips, no COLLECT; KOT shows the final amount", () => {
     const order = makeOrder({ isSettled: false, paymentMethod: "Online" });
-    expect(paymentLabel(order)).toEqual({ headline: "PAYMENT: ONLINE", collect: null });
+    expect(paymentLabel(order)).toEqual({ headline: "PREPAID", collect: null });
 
     const bill = buildCounterBill(order);
     const kot = buildKitchenKOT(order);
-    expect(bill).toContain("PAYMENT: ONLINE");
-    expect(kot).toContain("PAYMENT: ONLINE");
+    expect(bill.split("\n").map((l) => l.trim())).toContain("PREPAID");
+    expect(bill).toContain("Paid via Online");
+    expect(kot.split("\n").map((l) => l.trim())).toContain("PREPAID Rs 320.00");
     expect(bill).not.toContain("COLLECT");
     expect(kot).not.toContain("COLLECT");
-    expect(bill).not.toContain("PAID");
-    expect(kot).not.toContain("PAID");
   });
 
   it('TC13: not settled, empty paymentMethod -> "PAYMENT: UNCONFIRMED"', () => {
@@ -129,5 +125,62 @@ describe("billTemplates payment status", () => {
     const kot = buildKitchenKOT(order);
     expect(bill).toContain("QV-2026-181859");
     expect(kot).toContain("QV-2026-181859");
+  });
+});
+
+describe("billTemplates layout", () => {
+  const cod = () => makeOrder({ isSettled: false, paymentMethod: "COD", orderId: "2834936361926645" });
+
+  it("bill opens with a big QuickVerse heading (char 14 marker)", () => {
+    expect(buildCounterBill(cod()).split("\n")[0]).toBe(`${BIG}QuickVerse`);
+  });
+
+  it("bill has no customer name/phone, no CGST/SGST, no ECO tax note", () => {
+    const bill = buildCounterBill(cod());
+    expect(bill).not.toContain("Rahul Sharma");
+    expect(bill).not.toContain("9876543210");
+    expect(bill).not.toMatch(/CGST|SGST/);
+    expect(bill).not.toMatch(/9\(5\)|ECO/);
+  });
+
+  it("bill keeps Bill No., date/time and prep time", () => {
+    const bill = buildCounterBill(cod(), 15);
+    expect(bill).toContain("Bill No.: 926645");
+    expect(bill).toContain("Date: 20/09/26, 12:30");
+    expect(bill).toContain("Prep Time: 15 min");
+  });
+
+  it("bill shows the last 4 digits of the Order ID as the rider OTP", () => {
+    const lines = buildCounterBill(cod()).split("\n").map((l) => l.trim());
+    expect(lines).toContain("OTP: 6645");
+    expect(lines[lines.indexOf("OTP: 6645") + 1]).toBe("Show this to rider");
+    expect(lines).not.toContain("Order ID: 2834936361926645");
+  });
+
+  it("KOT drops the COD headline and the *** COLLECT *** banner, keeps one amount line", () => {
+    const kot = buildKitchenKOT(cod());
+    expect(kot).not.toContain("COD - COLLECT");
+    expect(kot).not.toContain("*** COLLECT");
+    expect(kot.split("\n").filter((l) => l.includes("COLLECT")).map((l) => l.trim())).toEqual(["COLLECT Rs 320.00"]);
+  });
+
+  it("item table: Qty/Price/Amount columns end at the same column on every row, both slips", () => {
+    const order = makeOrder({
+      orderItem: [
+        { id: 1, name: "Paneer Tikka Biryani Special", itemCount: 12, itemPrice: 250 },
+        { id: 2, name: "Tea", itemCount: 1, itemPrice: 10 },
+      ],
+    });
+    for (const slip of [buildCounterBill(order), buildKitchenKOT(order)]) {
+      const lines = slip.split("\n");
+      const header = lines.find((l) => l.startsWith("Item"))!;
+      const biryani = lines.find((l) => l.startsWith("Paneer Tikka"))!;
+      const tea = lines.find((l) => l.startsWith("Tea"))!;
+      expect(header).toBe("Item                Qty.    Price   Amount");
+      expect(biryani).toBe("Paneer Tikka".padEnd(20) + "  12   250.00  3000.00");
+      expect(tea).toBe("Tea".padEnd(20) + "   1    10.00    10.00");
+      // wrapped remainder of the name sits on its own line under the Item column
+      expect(lines[lines.indexOf(biryani) + 1]).toBe("Biryani Special");
+    }
   });
 });

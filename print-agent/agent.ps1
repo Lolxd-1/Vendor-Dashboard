@@ -1,4 +1,4 @@
-﻿# QuickVerse Print Agent v1.3.2 - pure PowerShell, ZERO installs.
+﻿# QuickVerse Print Agent v1.3.3 - pure PowerShell, ZERO installs.
 # Runs on any Windows 10/11 out of the box. No Node, no npm, no exe.
 # Listens only on http://127.0.0.1:1818 - unreachable from network.
 # Dashboard calls: POST http://127.0.0.1:1818/print  { printer, text }
@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$AGENT_VERSION = "1.3.2"
+$AGENT_VERSION = "1.3.3"
 
 # T09: dashboard-only CORS. If the dashboard is ever served from a new
 # domain, this is the single place to update.
@@ -223,10 +223,22 @@ function Get-PageBreaks([string[]] $lines, [double] $lineHeight, [double] $pageH
 function Print-Gdi($printerName, $text) {
     # GDI monospace: Courier New 8pt so 42 cols = one line on 80mm TM-T82X.
     # (Out-Printer uses proportional font and collapses 42 cols into ~24.)
-    $lines = @($text -split "\r?\n")
+    # A line starting with char 14 (ESC/POS "SO", double width) is a heading:
+    # drawn double size and centred. A blank slot follows it so the page-break
+    # maths, which counts normal lines, still reserves its double height.
+    $big = [string][char]14
+    $lines = @()
+    foreach ($l in @($text -split "\r?\n")) {
+        $lines += $l
+        if ($l.StartsWith($big)) { $lines += "" }
+    }
     # Bold: Regular's strokes are ~1 dot wide on a 203dpi head and print faint.
     # Same advance width as Regular, so 42 cols still measure 71.1mm.
     $font = New-Object System.Drawing.Font('Courier New', 8.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+    $bigFont = New-Object System.Drawing.Font('Courier New', 16.0, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Point)
+    # Typographic = the font's true 4.8pt advance. The default format pads every
+    # glyph and pushed column 42 out to 73.4mm, past the 72mm the head prints.
+    $fmt = [System.Drawing.StringFormat]::GenericTypographic
     $doc = $null
     try {
         $brush = [System.Drawing.Brushes]::Black
@@ -236,12 +248,17 @@ function Print-Gdi($printerName, $text) {
         $doc.DocumentName = 'QuickVerse Bill'
         $doc.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize('80mm', 315, 2000)
         $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(5, 5, 5, 5)
-        $state = @{ lines = $lines; font = $font; brush = $brush; page = 0; breaks = $null }
+        $state = @{ lines = $lines; font = $font; bigFont = $bigFont; fmt = $fmt; big = $big; brush = $brush; page = 0; breaks = $null }
         $doc.add_PrintPage({
             param($sender, $e)
             # A thermal head prints a dot or nothing: anti-aliased grey edges get
             # dithered into speckle, so draw every glyph pixel solid black.
             $e.Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+            # Double-strike: a second pass one printer dot to the right (what
+            # ESC/POS "emphasized" does). Bold alone still printed faint.
+            $dot = 100.0 / $e.Graphics.DpiX
+            $origin = New-Object System.Drawing.PointF(0, 0)
+            $span = $e.Graphics.MeasureString(('0' * 42), $state.font, $origin, $state.fmt).Width
             $lh = $state.font.GetHeight($e.Graphics)
             # Line height needs a real page Graphics, so the map is built on the
             # first page and reused: one job, one font, one paper size.
@@ -253,7 +270,16 @@ function Print-Gdi($printerName, $text) {
             else { $end = $state.lines.Count - 1 }
             $y = 0
             for ($i = $start; $i -le $end; $i++) {
-                $e.Graphics.DrawString($state.lines[$i], $state.font, $state.brush, 0, $y)
+                $ln = $state.lines[$i]
+                $f = $state.font
+                $x = 0
+                if ($ln.StartsWith($state.big)) {
+                    $ln = $ln.Substring(1)
+                    $f = $state.bigFont
+                    $x = [Math]::Max(0, ($span - $e.Graphics.MeasureString($ln, $f, $origin, $state.fmt).Width) / 2)
+                }
+                $e.Graphics.DrawString($ln, $f, $state.brush, $x, $y, $state.fmt)
+                $e.Graphics.DrawString($ln, $f, $state.brush, $x + $dot, $y, $state.fmt)
                 $y += $lh
             }
             $state.page = $state.page + 1
@@ -264,6 +290,8 @@ function Print-Gdi($printerName, $text) {
     } finally {
         if ($doc) { $doc.Dispose() }
         $font.Dispose()
+        $bigFont.Dispose()
+        $fmt.Dispose()
     }
 }
 
@@ -285,7 +313,8 @@ function Print-Text($printerName, $text) {
     if (Test-IsVirtualPrinter $row.Name $row.DriverName $row.PortName) {
         # Virtual / file queue (PDF, XPS): legacy spooler path.
         $tmp = Join-Path $env:TEMP ("qv-" + [DateTime]::Now.Ticks + ".txt")
-        Set-Content -LiteralPath $tmp -Value $text -Encoding UTF8
+        # Heading marker (char 14) is a Print-Gdi instruction, not text.
+        Set-Content -LiteralPath $tmp -Value ($text -replace [char]14, '') -Encoding UTF8
         try { Get-Content -LiteralPath $tmp -Raw | Out-Printer -Name $printerName }
         finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
     } else {
