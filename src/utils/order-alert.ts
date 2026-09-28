@@ -89,6 +89,12 @@ let compNode: DynamicsCompressorNode | null = null;
 let armed = false;
 let ringing = false;
 let ringStartedAt: number | null = null;
+// ring() awaits arm()/loadRing() before it sets `ringing`. Without these, a
+// stop() in that gap was a no-op and the ring started anyway, and two
+// overlapping ring() calls each started a looping source — stop() only
+// reached the last one, so the first rang forever after Accept.
+let ringGen = 0;
+let ringPending: Promise<boolean> | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let rearmInstalled = false;
 let preferredSinkId: string | null = null;
@@ -339,9 +345,17 @@ export interface RingOptions {
  * Returns false if audio was never armed — use this to
  * trigger your out-of-band fallback (SMS, call, push).
  */
-export async function ring({ escalate = true, volume = 1.0 }: RingOptions = {}): Promise<boolean> {
+export async function ring(opts: RingOptions = {}): Promise<boolean> {
   if (ringing) return true;   // idempotent: duplicate order events must not restart it
+  if (ringPending) return ringPending;   // one start in flight at a time
+  const p = startRing(opts, ringGen);
+  ringPending = p;
+  const clear = () => { if (ringPending === p) ringPending = null; };
+  p.then(clear, clear);
+  return p;
+}
 
+async function startRing({ escalate = true, volume = 1.0 }: RingOptions, gen: number): Promise<boolean> {
   // Lazy unlock (GUIDE §4): on machines where the restriction was removed
   // (browser policy, launch flag, installed PWA, desktop wrapper), audio is
   // allowed with zero interaction — so attempt the unlock here instead of
@@ -370,6 +384,10 @@ export async function ring({ escalate = true, volume = 1.0 }: RingOptions = {}):
     emit();
     return false;
   }
+
+  // stop() ran while we were awaiting — the order was already handled.
+  if (gen !== ringGen) return true;
+  if (ringing) return true;
 
   gainNode = ctx.createGain();
   const now = ctx.currentTime;
@@ -413,6 +431,10 @@ export async function ring({ escalate = true, volume = 1.0 }: RingOptions = {}):
  * centrally in Dashboardlayout) — never to a timeout.
  */
 export function stop(): void {
+  // Cancel any ring() still awaiting arm()/loadRing(), and let the next
+  // ring() start fresh instead of joining the cancelled one.
+  ringGen++;
+  ringPending = null;
   if (!ringing) return;
 
   const duration = ringStartedAt ? Date.now() - ringStartedAt : 0;
