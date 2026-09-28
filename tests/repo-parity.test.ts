@@ -14,6 +14,8 @@ const SHARED_PATHS = [
   "print-agent/package.json",
   "print-agent/start-agent.bat",
   "print-agent/start-agent.vbs",
+  "print-agent/updater.ps1",
+  "print-agent/update-agent.vbs",
   "print-agent/tests/Test-Agent.ps1",
   "files/Install-QuickVerse.ps1",
   "files/Install-VendorDashboard.ps1",

@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.3.4 (EPSON TM-T82X, no Node).
+    QuickVerse 2-min shop setup: dashboard shortcut + print agent v1.4.0 (EPSON TM-T82X, no Node).
 
 .DESCRIPTION
     One guy, 2 mins per shop, zero cost:
       1. Verifies Epson/thermal printer queue exists (warns with driver hint if not)
       2. Installs print-agent to C:\QuickVerse\print-agent (copies server.js + launchers)
       3. Registers Task Scheduler at logon (hidden, reliable) + Startup VBS fallback
-      4. Starts agent now, verifies /status v1.3.4 + /printers
+      4. Starts agent now, verifies /status v1.4.0 + /printers
       5. Reuses Install-VendorDashboard.ps1 steps: Chrome --app shortcut, autoplay policy, NoSleep
       6. Prints 42-col self-test slip + PASS/FAIL checklist
 
@@ -33,11 +33,15 @@ param(
     [switch] $AddToStartup,
     [switch] $NoSleep,
     [switch] $SkipPolicy,
-    [switch] $SkipPrintTest
+    [switch] $SkipPrintTest,
+    # Signed auto-update check, twice a day. A PC that is off at these times
+    # checks as soon as it is next on (StartWhenAvailable).
+    [string] $UpdateMorning = "08:00",
+    [string] $UpdateNight = "23:30"
 )
 
 $ErrorActionPreference = 'Stop'
-$ExpectedAgentVersion = "1.3.4"
+$ExpectedAgentVersion = "1.4.0"
 function Write-Step ($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Ok ($m) { Write-Host "    [ok]   $m" -ForegroundColor Green }
 function Write-Warn2 ($m) { Write-Host "    [warn] $m" -ForegroundColor Yellow }
@@ -93,6 +97,8 @@ New-Item -ItemType Directory -Path $AgentDest -Force | Out-Null
 Copy-Item (Join-Path $AgentSource "agent.ps1") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "start-agent.bat") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "start-agent.vbs") $AgentDest -Force
+Copy-Item (Join-Path $AgentSource "updater.ps1") $AgentDest -Force
+Copy-Item (Join-Path $AgentSource "update-agent.vbs") $AgentDest -Force
 Write-Ok "Agent files copied (pure PowerShell - no Node, no npm)"
 
 # -- 3. Task Scheduler at logon (primary) --
@@ -120,6 +126,18 @@ try {
     Write-Ok "Startup fallback shortcut created"
 } catch { Write-Warn2 "Startup shortcut failed: $($_.Exception.Message)" }
 
+# -- 3c. Auto-update: signed check twice a day (updater.ps1) --
+Write-Step "Registering agent auto-update (daily at $UpdateMorning and $UpdateNight)"
+try {
+    $uAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$AgentDest\update-agent.vbs`"" -WorkingDirectory $AgentDest
+    $uTriggers = @((New-ScheduledTaskTrigger -Daily -At $UpdateMorning), (New-ScheduledTaskTrigger -Daily -At $UpdateNight))
+    $uSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    Register-ScheduledTask -TaskName "QuickVerse Agent Updater" -Action $uAction -Trigger $uTriggers -Settings $uSettings -Description "Installs signed QuickVerse print agent updates (keeps the old agent on any failure)" -Force | Out-Null
+    Write-Ok "Scheduled task 'QuickVerse Agent Updater' registered"
+} catch {
+    Write-Warn2 "Auto-update task failed: $($_.Exception.Message) - printing works, updates will need a re-install."
+}
+
 # -- 4. Start agent now + verify --
 Write-Step "Starting agent + verifying"
 try { Start-ScheduledTask -TaskName "QuickVerse Print Agent" -ErrorAction SilentlyContinue } catch {}
@@ -145,6 +163,15 @@ try {
     $pl = Invoke-RestMethod -Uri "http://127.0.0.1:1818/printers" -TimeoutSec 5
     Write-Ok "Queues: $($pl.printers -join ' | ')"
 } catch { Write-Warn2 "Could not list printers: $($_.Exception.Message)" }
+
+# -- 4b. First update check now: proves this PC can reach the release site and
+#        verify its signature, and moves straight to the newest signed agent.
+if ($agentOk) {
+    Write-Step "Checking for agent updates (signed)"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$AgentDest\updater.ps1" | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Update check OK - see $AgentDest\update.log" }
+    else { Write-Warn2 "Update check exit $LASTEXITCODE - see $AgentDest\update.log (printing is not affected)" }
+}
 
 # -- 5. Dashboard shortcut + policy + power (reuse vendor flow) --
 Write-Step "Dashboard shortcut + autoplay policy + power"

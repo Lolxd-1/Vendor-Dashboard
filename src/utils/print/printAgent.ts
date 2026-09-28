@@ -18,7 +18,7 @@ export const DEFAULT_PRINTERS: PrinterSettings = {
   agentPort: 1818,
 };
 
-export const REQUIRED_AGENT_VERSION = "1.3.4";
+export const REQUIRED_AGENT_VERSION = "1.4.0";
 
 // exp1: real vs virtual queue detection.
 // Agent v1.3 returns { printers, real, detail }. Older agents return only { printers }.

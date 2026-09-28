@@ -81,6 +81,22 @@ if (Test-Path $batPath) {
 $hasBareFallback = $content -match '\$printers\s*\|\s*Select-Object\s+-First\s+1'
 Assert-That 'TC6 safety: self-test target selection no longer uses a bare $printers | Select-Object -First 1' (-not $hasBareFallback) 'bare fallback pattern still present'
 
+# --- TC7 - upgrade: a running agent is stopped BEFORE the new files are copied
+# --- (otherwise the old version keeps port 1818 and keeps printing).
+$stopAt = $content.IndexOf('Stop-Process')
+$copyAt = $content.IndexOf('Copy-Item (Join-Path $AgentSource "agent.ps1")')
+Assert-That 'TC7 upgrade: running agent is stopped before agent.ps1 is copied' (($stopAt -ge 0) -and ($copyAt -gt $stopAt)) ("Stop-Process at $stopAt, copy at $copyAt")
+
+# --- TC8 - auto-update: updater files are installed and scheduled twice a day.
+$copiesUpdater = ($content -match 'Copy-Item \(Join-Path \$AgentSource "updater\.ps1"\)') -and ($content -match 'Copy-Item \(Join-Path \$AgentSource "update-agent\.vbs"\)')
+Assert-That 'TC8 auto-update: updater.ps1 and update-agent.vbs are copied' $copiesUpdater 'copy lines not found'
+$dailyTriggers = ([regex]::Matches($content, 'New-ScheduledTaskTrigger -Daily')).Count
+$registers = $content -match 'Register-ScheduledTask -TaskName "QuickVerse Agent Updater"'
+$catchesUp = $content -match '\$uSettings = New-ScheduledTaskSettingsSet[^\r\n]*-StartWhenAvailable'
+Assert-That 'TC8 auto-update: "QuickVerse Agent Updater" task, 2 daily triggers, catches up after the PC was off' (($dailyTriggers -eq 2) -and $registers -and $catchesUp) ("daily=$dailyTriggers registers=$registers startWhenAvailable=$catchesUp")
+$agentSrc = Join-Path $repoRoot "print-agent"
+Assert-That 'TC8 auto-update: print-agent ships updater.ps1 + update-agent.vbs' ((Test-Path (Join-Path $agentSrc "updater.ps1")) -and (Test-Path (Join-Path $agentSrc "update-agent.vbs"))) "files missing in $agentSrc"
+
 Write-Output ""
 if ($script:Failures -eq 0) {
     Write-Output "ALL TESTS PASSED"

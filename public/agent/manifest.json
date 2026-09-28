@@ -1,0 +1,7 @@
+{
+  "version": "1.4.0",
+  "files": {
+    "agent.ps1": "fd8b3ceff723604b71222aca4e037338f4db5b8212fbc58c42e3ebbaf8a30864",
+    "updater.ps1": "2f5275972d5511ec18bf0ae93c64f55279ad7ae28636e18369756fa120514a11"
+  }
+}
