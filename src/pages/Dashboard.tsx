@@ -28,7 +28,7 @@ const Dashboard = () => {
 
   const { isFetching, refresh } = useDashboardStats();
 
-  const { data: allOrders } = useGetVendorOrdersQuery(
+  const { data: allOrders, fulfilledTimeStamp: allOrdersAt } = useGetVendorOrdersQuery(
     { shopId: shopId ?? "" },
     {
       skip: !shopId,
@@ -82,7 +82,8 @@ const Dashboard = () => {
     return () => clearInterval(t);
   }, []);
 
-  // Populate Kanban columns on initial load
+  // Populate Kanban columns on initial load, and re-confirm on every poll
+  // (allOrdersAt) — see useOrderSync for why an unchanged `data` must still count.
   useEffect(() => {
     if (allOrders) {
       reconcile(allOrders);
@@ -93,7 +94,7 @@ const Dashboard = () => {
         }
       }
     }
-  }, [allOrders, reconcile]);
+  }, [allOrders, allOrdersAt, reconcile]);
 
   // Auto-switch to Pending tab when new pending orders arrive
   useEffect(() => {

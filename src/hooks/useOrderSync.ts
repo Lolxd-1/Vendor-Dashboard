@@ -56,7 +56,7 @@ export const useOrderSync = (shopId: string | null, socket: OrderSocketState) =>
     return () => clearTimeout(timer);
   }, [socket.isConnected, socket.lastMessageAt]);
 
-  const { data, refetch } = useGetVendorOrdersQuery(
+  const { data, refetch, fulfilledTimeStamp } = useGetVendorOrdersQuery(
     { shopId: shopId ?? "", orderStatus: ACTIVE_STATUSES },
     {
       skip: !shopId,
@@ -71,9 +71,13 @@ export const useOrderSync = (shopId: string | null, socket: OrderSocketState) =>
     refetchRef.current = refetch;
   }, [refetch]);
 
+  // Re-run on every completed poll, not only when the content changed: RTK Query
+  // keeps the same `data` reference for an identical response, and without the
+  // re-confirm an order this list still holds aged out of the board the next
+  // time the other (full) list changed — the "accepted order vanishes" bug.
   useEffect(() => {
     if (data) reconcile(data);
-  }, [data, reconcile]);
+  }, [data, fulfilledTimeStamp, reconcile]);
 
   const lastResyncRef = useRef(0);
   const resync = useCallback(() => {
