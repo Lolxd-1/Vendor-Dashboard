@@ -83,7 +83,7 @@ It may lag: a fresh install self-updates at the installer's first check.
 | `update-failed.txt` | A version that failed its health check here; it is skipped until a newer release. |
 | `update-staging\` | Temporary download folder; deleted after every run. |
 | Task **"QuickVerse Agent Updater"** | `wscript.exe update-agent.vbs`, daily 08:00 + 23:30, `StartWhenAvailable`, 10-min limit. |
-| Task **"QuickVerse Print Agent"** | Starts the agent at logon. **Only created when the installer runs as Administrator.** Without it the Startup-folder shortcut (`start-agent.vbs`) starts the agent — the updater handles both. |
+| Task **"QuickVerse Print Agent"** | Starts the agent hidden (via `start-agent.vbs`) at this user's logon, plus a 1-minute watchdog that restarts it if it ever stops. No time limit. Registers without Administrator. Only if registration fails does the installer create the Startup-folder shortcut (`start-agent.vbs`) instead — the updater handles both. |
 
 ---
 

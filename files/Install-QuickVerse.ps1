@@ -101,30 +101,51 @@ Copy-Item (Join-Path $AgentSource "updater.ps1") $AgentDest -Force
 Copy-Item (Join-Path $AgentSource "update-agent.vbs") $AgentDest -Force
 Write-Ok "Agent files copied (pure PowerShell - no Node, no npm)"
 
-# -- 3. Task Scheduler at logon (primary) --
+# -- 3. Task Scheduler (primary): at logon + watchdog every minute --
 Write-Step "Registering auto-start (Task Scheduler)"
+$taskOk = $false
 try {
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$AgentDest\agent.ps1`"" -WorkingDirectory $AgentDest
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $trigger -Settings $settings -Description "QuickVerse silent 80mm print agent v$ExpectedAgentVersion (no Node)" -Force | Out-Null
-    Write-Ok "Scheduled task 'QuickVerse Print Agent' registered"
+    # Launched through start-agent.vbs: fully hidden, so there is no console
+    # window for staff to close (closing it used to kill the agent), and the
+    # VBS waits on the agent, so the task shows Running exactly while it lives.
+    $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$AgentDest\start-agent.vbs`"" -WorkingDirectory $AgentDest
+    # -User: THIS Windows user's logon. An any-user logon trigger needs
+    # Administrator, so a normal double-click of Start-Setup.bat never got the
+    # task at all. Watchdog: every minute, forever - a no-op while the agent
+    # runs (IgnoreNew), and brings it back within a minute if it was killed.
+    $triggers = @(
+        (New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 1))
+    )
+    # ExecutionTimeLimit 0 = never. The default (72h) stops the agent on a PC left on for 3 days.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName "QuickVerse Print Agent" -Action $action -Trigger $triggers -Settings $settings -Description "QuickVerse silent 80mm print agent v$ExpectedAgentVersion (no Node)" -Force -ErrorAction Stop | Out-Null
+    $taskOk = $true
+    Write-Ok "Scheduled task 'QuickVerse Print Agent' registered (hidden, at logon + restarts within 1 min if stopped)"
 } catch {
     Write-Warn2 "Task Scheduler failed: $($_.Exception.Message) - Startup VBS fallback will cover it."
 }
 
-# -- 3b. Startup VBS fallback --
-try {
-    $startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-    $ws = New-Object -ComObject WScript.Shell
-    $lnk = $ws.CreateShortcut((Join-Path $startup "QuickVerse Print Agent.lnk"))
-    $lnk.TargetPath = "wscript.exe"
-    $lnk.Arguments = "`"$AgentDest\start-agent.vbs`""
-    $lnk.WorkingDirectory = $AgentDest
-    $lnk.Description = "QuickVerse print agent (fallback auto-start)"
-    $lnk.Save()
-    Write-Ok "Startup fallback shortcut created"
-} catch { Write-Warn2 "Startup shortcut failed: $($_.Exception.Message)" }
+# -- 3b. Startup VBS fallback: only when the task could not be registered.
+#        Next to the task it would race it at logon, and an agent started
+#        outside the task is one the watchdog cannot see.
+$startupLnk = Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup" "QuickVerse Print Agent.lnk"
+if ($taskOk) {
+    if (Test-Path -LiteralPath $startupLnk) {
+        try { Remove-Item -LiteralPath $startupLnk -Force; Write-Ok "Old Startup shortcut removed (the task covers it)" } catch { Write-Warn2 "Could not remove old Startup shortcut: $($_.Exception.Message)" }
+    }
+} else {
+    try {
+        $ws = New-Object -ComObject WScript.Shell
+        $lnk = $ws.CreateShortcut($startupLnk)
+        $lnk.TargetPath = "wscript.exe"
+        $lnk.Arguments = "`"$AgentDest\start-agent.vbs`""
+        $lnk.WorkingDirectory = $AgentDest
+        $lnk.Description = "QuickVerse print agent (fallback auto-start)"
+        $lnk.Save()
+        Write-Ok "Startup fallback shortcut created"
+    } catch { Write-Warn2 "Startup shortcut failed: $($_.Exception.Message)" }
+}
 
 # -- 3c. Auto-update: signed check twice a day (updater.ps1) --
 Write-Step "Registering agent auto-update (daily at $UpdateMorning and $UpdateNight)"
@@ -141,7 +162,12 @@ try {
 # -- 4. Start agent now + verify --
 Write-Step "Starting agent + verifying"
 try { Start-ScheduledTask -TaskName "QuickVerse Print Agent" -ErrorAction SilentlyContinue } catch {}
-Start-Sleep -Seconds 3
+# Poll instead of a fixed 3s: on a slow PC the fallback below would otherwise
+# start a second copy outside the task.
+for ($i = 0; $i -lt 15; $i++) {
+    try { if ((Invoke-RestMethod -Uri "http://127.0.0.1:1818/status" -TimeoutSec 2).online) { break } } catch { }
+    Start-Sleep -Seconds 1
+}
 $agentOk = $false
 try {
     $st = Invoke-RestMethod -Uri "http://127.0.0.1:1818/status" -TimeoutSec 5

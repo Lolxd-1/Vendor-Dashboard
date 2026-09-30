@@ -97,6 +97,22 @@ Assert-That 'TC8 auto-update: "QuickVerse Agent Updater" task, 2 daily triggers,
 $agentSrc = Join-Path $repoRoot "print-agent"
 Assert-That 'TC8 auto-update: print-agent ships updater.ps1 + update-agent.vbs' ((Test-Path (Join-Path $agentSrc "updater.ps1")) -and (Test-Path (Join-Path $agentSrc "update-agent.vbs"))) "files missing in $agentSrc"
 
+# --- TC9 - always-on: the agent task has no window to close, registers
+# --- without Administrator, restarts a stopped agent, and never times out.
+# --- (Visible console + closing it = agent gone until the next Start-Setup.)
+$hiddenLaunch = $content -match '\$action = New-ScheduledTaskAction -Execute "wscript\.exe" -Argument "`"\$AgentDest\\start-agent\.vbs`""'
+Assert-That 'TC9 always-on: agent task launches hidden through start-agent.vbs, not a console powershell.exe' $hiddenLaunch 'agent task action is not wscript start-agent.vbs'
+$userLogon = $content -match 'New-ScheduledTaskTrigger -AtLogOn -User '
+$anyUserLogon = $content -match 'New-ScheduledTaskTrigger -AtLogOn\s*[\r\n)]'
+Assert-That 'TC9 always-on: logon trigger is for the current user (any-user logon needs Administrator)' ($userLogon -and -not $anyUserLogon) "userLogon=$userLogon anyUserLogon=$anyUserLogon"
+$watchdog = $content -match 'New-ScheduledTaskTrigger -Once [^\r\n]*-RepetitionInterval \(New-TimeSpan -Minutes 1\)'
+$agentSettings = [regex]::Match($content, '(?m)^\s*\$settings = New-ScheduledTaskSettingsSet[^\r\n]*').Value
+$noLimit = $agentSettings -match '-ExecutionTimeLimit \(\[TimeSpan\]::Zero\)'
+$ignoreNew = $agentSettings -match '-MultipleInstances IgnoreNew'
+Assert-That 'TC9 always-on: 1-minute watchdog trigger, no 72h time limit, one instance at a time' ($watchdog -and $noLimit -and $ignoreNew) "watchdog=$watchdog noLimit=$noLimit ignoreNew=$ignoreNew"
+$vbs = Get-Content -Raw -Path (Join-Path $agentSrc "start-agent.vbs")
+Assert-That 'TC9 always-on: start-agent.vbs runs the agent hidden (0) and waits on it (True)' ($vbs -match 'agent\.ps1""", 0, True') 'start-agent.vbs Run line is not "..., 0, True"'
+
 Write-Output ""
 if ($script:Failures -eq 0) {
     Write-Output "ALL TESTS PASSED"
