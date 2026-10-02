@@ -1,5 +1,0 @@
-.env
-credentials/token.json
-output/
-__pycache__/
-*.pyc

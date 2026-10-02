@@ -29,7 +29,8 @@ Printes& Invoice/
 results/
 print-agent/package-lock.json
 
-# Automation (printer-draft experiments)
+# Automation (printer-draft experiments) - not part of the dashboard, kept local only
+automation/
 automation/.env
 automation/credentials/token.json
 automation/output/
