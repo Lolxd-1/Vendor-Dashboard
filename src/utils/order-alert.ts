@@ -98,6 +98,9 @@ let ringPending: Promise<boolean> | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let rearmInstalled = false;
 let preferredSinkId: string | null = null;
+// Gain the current ring was started at, before the vendor's volume is applied,
+// so a slider move mid-ring can rescale it.
+let ringBaseGain = 1.0;
 
 const listeners = new Set<(s: AlertState) => void>();
 
@@ -391,12 +394,15 @@ async function startRing({ escalate = true, volume = 1.0 }: RingOptions, gen: nu
 
   gainNode = ctx.createGain();
   const now = ctx.currentTime;
+  const userVolume = getVolume();
 
   if (escalate) {
-    gainNode.gain.setValueAtTime(CONFIG.startVolume, now);
-    gainNode.gain.linearRampToValueAtTime(1.0, now + CONFIG.rampSeconds);
+    ringBaseGain = 1.0;
+    gainNode.gain.setValueAtTime(CONFIG.startVolume * userVolume, now);
+    gainNode.gain.linearRampToValueAtTime(1.0 * userVolume, now + CONFIG.rampSeconds);
   } else {
-    gainNode.gain.setValueAtTime(volume, now);
+    ringBaseGain = volume;
+    gainNode.gain.setValueAtTime(volume * userVolume, now);
   }
 
   // Transparent limiter: the ring file is already mastered to full scale,
@@ -487,6 +493,42 @@ export async function selfTest(): Promise<boolean> {
   if (ok) setTimeout(stop, 1400);
   event(ok ? 'sound_test_played' : 'sound_test_failed');
   return ok;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* Vendor volume — scales this site's ring only, never the Windows volume     */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+// Never 0: a muted alarm means orders wait in silence.
+export const MIN_VOLUME = 0.1;
+const VOLUME_KEY = 'orderAlert.volume';
+let savedVolume: number | null = null;
+
+const clampVolume = (v: number): number => Math.min(1, Math.max(MIN_VOLUME, v));
+
+/** Ring volume, MIN_VOLUME–1. Defaults to 1 (full) when nothing valid is saved. */
+export function getVolume(): number {
+  if (savedVolume === null) {
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(VOLUME_KEY); } catch { /* ignore */ }
+    const n = raw !== null && raw.trim() !== '' ? Number(raw) : NaN;
+    savedVolume = Number.isFinite(n) ? clampVolume(n) : 1;
+  }
+  return savedVolume;
+}
+
+/** Save the ring volume and apply it to a ring that is already playing. */
+export function setVolume(v: number): void {
+  if (!Number.isFinite(v)) return;
+  savedVolume = clampVolume(v);
+  try { localStorage.setItem(VOLUME_KEY, String(savedVolume)); } catch { /* ignore */ }
+  if (ringing && gainNode && ctx) {
+    const now = ctx.currentTime;
+    try {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(ringBaseGain * savedVolume, now);
+    } catch { /* ignore */ }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

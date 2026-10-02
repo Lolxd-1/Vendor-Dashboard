@@ -1,3 +1,4 @@
+import { Volume2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as Alert from "../utils/order-alert";
 import type { AlertState } from "../utils/order-alert";
@@ -10,8 +11,15 @@ import type { AlertState } from "../utils/order-alert";
 const SoundStatusChip = () => {
   const [state, setState] = useState<AlertState>(() => Alert.getState());
   const [testing, setTesting] = useState(false);
+  const [volume, setVolume] = useState(() => Math.round(Alert.getVolume() * 100));
 
   useEffect(() => Alert.subscribe(setState), []);
+
+  const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const pct = Number(e.target.value);
+    setVolume(pct);
+    Alert.setVolume(pct / 100);
+  };
 
   const handleFix = () => {
     // Called from a real click → valid gesture for arm().
@@ -46,6 +54,23 @@ const SoundStatusChip = () => {
         >
           {testing ? "Testing…" : "Test sound"}
         </button>
+        <label
+          className="flex items-center gap-1 text-slate-500 dark:text-zinc-400"
+          title="Order alert volume (this website only)"
+        >
+          <Volume2 size={13} className="shrink-0" />
+          <input
+            type="range"
+            min={Alert.MIN_VOLUME * 100}
+            max={100}
+            step={5}
+            value={volume}
+            onChange={handleVolume}
+            aria-label="Order alert volume"
+            className="w-16 sm:w-20 h-1 cursor-pointer accent-emerald-600"
+          />
+          <span className="text-[10px] font-bold tabular-nums w-7">{volume}%</span>
+        </label>
       </div>
     );
   }
