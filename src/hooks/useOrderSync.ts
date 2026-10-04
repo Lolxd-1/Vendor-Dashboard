@@ -76,7 +76,7 @@ export const useOrderSync = (shopId: string | null, socket: OrderSocketState) =>
   // re-confirm an order this list still holds aged out of the board the next
   // time the other (full) list changed — the "accepted order vanishes" bug.
   useEffect(() => {
-    if (data) reconcile(data);
+    if (data) reconcile(data, fulfilledTimeStamp);
   }, [data, fulfilledTimeStamp, reconcile]);
 
   const lastResyncRef = useRef(0);

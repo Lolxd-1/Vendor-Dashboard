@@ -36,6 +36,7 @@ const banner = () => screen.queryByText(/not printed/i);
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear(); // printed flags are shared there too
   reprintMock.mockReset();
 });
 

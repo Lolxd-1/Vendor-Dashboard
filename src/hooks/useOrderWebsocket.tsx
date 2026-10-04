@@ -14,10 +14,10 @@ const isValidOrder = (data: any): boolean => {
   // It should at least have an orderId
   if (typeof data.orderId !== "string") return false;
 
-  // Accept if it has either orderItems or orderItem
-  const hasItems = Array.isArray(data.orderItems) || Array.isArray(data.orderItem);
-  
-  return hasItems;
+  // At least one item under `orderItem` — the only field the card and the bill
+  // read. An empty list (or items under any other name) rang as a blank card
+  // and printed a bill with no items. The next REST poll brings the full order.
+  return Array.isArray(data.orderItem) && data.orderItem.length > 0;
 };
 
 // Raw STOMP frames include the CONNECT frame's `Authorization: Bearer <jwt>` header, so this
@@ -192,7 +192,10 @@ export const useOrderWebsocket = (): OrderSocketState => {
               }
             }
 
-            else if (isValidOrder(data)) {
+            // Only a frame with NO status is a new order. A status this client does
+            // not know (a rider update, say) is about an order that already exists,
+            // and adding it here rang it as new — the repeat-bill bug.
+            else if (!currentStatus && isValidOrder(data)) {
               console.log("➕ New Incoming Order added to grid:", data.orderId);
               addPendingOrder(data);
             }

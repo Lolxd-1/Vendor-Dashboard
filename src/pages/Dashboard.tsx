@@ -86,7 +86,9 @@ const Dashboard = () => {
   // (allOrdersAt) — see useOrderSync for why an unchanged `data` must still count.
   useEffect(() => {
     if (allOrders) {
-      reconcile(allOrders);
+      // The timestamp travels with the list: coming back from Order History (which
+      // shares this cache entry) replays a list from minutes ago before the refetch.
+      reconcile(allOrders, allOrdersAt);
       if (!sessionStorage.getItem("vendorName")) {
         const orderWithShop = allOrders.find((o) => o.shopDetails?.name);
         if (orderWithShop?.shopDetails?.name) {

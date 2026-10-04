@@ -127,24 +127,76 @@ const safeSetItem = (key: string, value: string): void => {
   }
 };
 
-// Idempotency: same order never double-prints on retry / re-render.
+// The printed flag is ALSO kept in localStorage, which every dashboard window on
+// this PC shares. sessionStorage alone is per window: with two windows open (the
+// Startup shortcut plus a click on the desktop icon), accepting the same order in
+// the second one printed a second bill. The value is when it printed, so flags
+// older than PRINTED_TTL_MS are pruned. Every access is total, like the rest.
+export const PRINTED_TTL_MS = 2 * 24 * 60 * 60 * 1000;
+
+const sharedGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const sharedSet = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* quota/blocked — the per-window flag still guards this window */
+  }
+};
+
+const sharedRemove = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+};
+
+// Drops shared printed flags older than PRINTED_TTL_MS (or unreadable). Never throws.
+export const pruneSharedPrinted = (now = Date.now()): number => {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !PRINTED_RE.test(key)) continue;
+      const t = Date.parse(localStorage.getItem(key) ?? "");
+      if (Number.isNaN(t) || now - t > PRINTED_TTL_MS) stale.push(key);
+    }
+    stale.forEach(sharedRemove);
+    return stale.length;
+  } catch {
+    return 0;
+  }
+};
+
+// Idempotency: same order never double-prints on retry / re-render / 2nd window.
 export const markPrinted = (orderId: string): void => {
   safeSetItem(printedKey(orderId), "1");
+  sharedSet(printedKey(orderId), new Date().toISOString());
 };
 
 export const wasPrinted = (orderId: string): boolean => {
-  return safeGetItem(printedKey(orderId)) === "1";
+  return safeGetItem(printedKey(orderId)) === "1" || sharedGet(printedKey(orderId)) !== null;
 };
 
 // So the Reprint button can retry after a failed auto-print.
 export const clearPrinted = (orderId: string): void => {
   safeRemoveItem(printedKey(orderId));
+  sharedRemove(printedKey(orderId));
 };
 
 // Atomic test-and-set: false if this order was already claimed. Atomic because
 // it is synchronous — JS runs it to completion before any other caller can
 // observe the flag — which is exactly what check-then-act around an `await`
 // is not: two accepts could both read `wasPrinted === false` and both print.
+// (Across two windows it is test-and-set on shared storage: only two clicks
+// within the same few milliseconds could both pass — not a human pattern.)
 export const claimPrint = (orderId: string): boolean => {
   if (wasPrinted(orderId)) return false;
   markPrinted(orderId);

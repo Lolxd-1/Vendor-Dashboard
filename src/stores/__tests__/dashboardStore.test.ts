@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GRACE_MS, normalisePhase, useDashboardStore } from "../useDashboardStore";
 import type { Order } from "../../types/order";
-import { setOrderStamp } from "../../utils/print/printLedger";
+import { markPrinted, setOrderStamp } from "../../utils/print/printLedger";
 
 const baseOrder: Order = {
   orderId: "QV-2026-000001",
@@ -44,6 +44,7 @@ const store = () => useDashboardStore.getState();
 beforeEach(() => {
   store().clearAll();
   sessionStorage.clear(); // a stamp written by one test must not leak into the next
+  localStorage.clear();   // nor a shared printed flag
 });
 
 describe("normalisePhase", () => {
@@ -265,6 +266,37 @@ describe("reconcile", () => {
     expect(store().pendingOrders).toHaveLength(0);
   });
 
+  it("TC11b: a rejected / handed-over order is not pulled back by a lagging poll — no second ring", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().removeOrder("QV-1"); // Reject or Mark Handed Over succeeded
+
+    store().reconcile([makeOrder("QV-1", "PENDING")], Date.now()); // replica lag
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC11c: once the close is older than GRACE_MS, a FRESH list is believed again", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().removeOrder("QV-1");
+
+    vi.advanceTimersByTime(GRACE_MS + 1);
+    store().reconcile([makeOrder("QV-1", "ACCEPTED")], Date.now());
+
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  it("TC11d: a list fetched BEFORE the close never revives it, however late it is applied", () => {
+    const fetchedAt = Date.now();
+    vi.advanceTimersByTime(1_000);
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().removeOrder("QV-1");
+
+    vi.advanceTimersByTime(GRACE_MS * 10);
+    store().reconcile([makeOrder("QV-1", "READY_FOR_PICKUP")], fetchedAt);
+
+    expect(store().readyOrders).toHaveLength(0);
+  });
+
   it("TC15: is exempt from forward-only, so the server can revert an order", () => {
     store().upsertOrder(makeOrder("QV-1", "ACCEPTED"), "ACCEPTED");
 
@@ -437,5 +469,105 @@ describe("upsertOrder is forward-only", () => {
 
     expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["A1", "A2", "A3"]);
     expect(store().acceptedOrders[0].customerName).toBe("Asha");
+  });
+});
+
+describe("edge cases: an accepted order can never ring again", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("TC-E1: coming back from Order History replays an old cached list — accepted stays accepted", () => {
+    const cachedAt = Date.now();                       // Dashboard's last poll, order still PENDING
+    store().addPendingOrder(makeOrder("QV-1318", "PENDING"));
+    vi.advanceTimersByTime(20_000);
+    store().moveToAccepted("QV-1318", 15);             // vendor accepts, goes to Order History
+
+    vi.advanceTimersByTime(26 * 60_000);               // back on the Dashboard 26 min later
+    store().reconcile([makeOrder("QV-1318", "PENDING")], cachedAt);
+
+    expect(store().pendingOrders).toHaveLength(0);
+    expect(store().acceptedOrders.map(o => o.orderId)).toEqual(["QV-1318"]);
+  });
+
+  it("TC-E2: the same holds for an order accepted on ANOTHER device (no stamp here)", () => {
+    const cachedAt = Date.now();
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    vi.advanceTimersByTime(5_000);
+    store().upsertOrder({ orderId: "QV-1" }, "ACCEPTED"); // socket: accepted elsewhere
+
+    vi.advanceTimersByTime(GRACE_MS * 5);
+    store().reconcile([makeOrder("QV-1", "PENDING")], cachedAt);
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-E3: a list fetched AFTER the move, past the grace window, is still believed", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 15);
+
+    vi.advanceTimersByTime(GRACE_MS + 1);
+    store().reconcile([makeOrder("QV-1", "PENDING")], Date.now());
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  it("TC-E4: IN_TRANSIT from the poll drops the order at once (no 2-minute linger)", () => {
+    store().upsertOrder(makeOrder("QV-1", "READY_FOR_PICKUP"), "READY_FOR_PICKUP");
+
+    store().reconcile([makeOrder("QV-1", "IN_TRANSIT")], Date.now());
+
+    expect(store().readyOrders).toHaveLength(0);
+  });
+
+  it("TC-E5: after a reload, a terminal order in the list cannot be re-added by a late socket frame", () => {
+    store().reconcile([makeOrder("QV-1", "IN_TRANSIT"), makeOrder("QV-2", "completed")], Date.now());
+
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().upsertOrder(makeOrder("QV-2", "PENDING"), "PENDING");
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-E6: the socket cannot put back in Pending an order accepted in this window before a reload", () => {
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().moveToAccepted("QV-1", 15);   // writes the acceptedAt stamp (survives reload)
+    store().clearAll();                   // = reload: empty board, empty memory
+
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+    store().upsertOrder(makeOrder("QV-1", "PENDING"), "PENDING");
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-E7: the socket cannot put back in Pending an order another window already printed", () => {
+    markPrinted("QV-1");
+    sessionStorage.clear();               // this window never saw it
+
+    store().addPendingOrder(makeOrder("QV-1", "PENDING"));
+
+    expect(store().pendingOrders).toHaveLength(0);
+  });
+
+  it("TC-E8: the socket may still move a printed order FORWARD (accepted elsewhere -> ready)", () => {
+    markPrinted("QV-1");
+    store().upsertOrder(makeOrder("QV-1", "READY_FOR_PICKUP"), "READY_FOR_PICKUP");
+
+    expect(store().readyOrders.map(o => o.orderId)).toEqual(["QV-1"]);
+  });
+
+  it("TC-E9: a brand-new order is never blocked", () => {
+    store().removeOrder("QV-OTHER");
+    store().addPendingOrder(makeOrder("QV-NEW", "PENDING"));
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-NEW"]);
+  });
+
+  it("TC-E10: the closed memory is bounded — the oldest entries are forgotten first", () => {
+    for (let i = 0; i <= 2000; i++) store().removeOrder(`QV-C${i}`);
+
+    store().addPendingOrder(makeOrder("QV-C0", "PENDING"));    // evicted -> allowed
+    store().addPendingOrder(makeOrder("QV-C2000", "PENDING")); // newest -> still blocked
+
+    expect(store().pendingOrders.map(o => o.orderId)).toEqual(["QV-C0"]);
   });
 });

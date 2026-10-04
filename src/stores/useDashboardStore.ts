@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Order } from '../types/order';
-import { getOrderStamp, pruneLedger, setOrderStamp } from '../utils/print/printLedger';
+import { getOrderStamp, pruneLedger, pruneSharedPrinted, setOrderStamp, wasPrinted } from '../utils/print/printLedger';
 
 export type OrderPhase = "PENDING" | "ACCEPTED" | "READY_FOR_PICKUP";
 
@@ -17,7 +17,10 @@ export const normalisePhase = (raw: unknown): OrderPhase | null => {
 // States the server will never revive. useOrderWebsocket.tsx drops an order the
 // instant its socket frame reports one of these — exported here so reconcile
 // (the REST poll path) can match that exact set instead of drifting from it.
-export const TERMINAL_STATES: ReadonlySet<string> = new Set(["REJECTED", "CANCELLED", "COMPLETED"]);
+// IN_TRANSIT = the rider has it: off the vendor's board for good. Left out, the
+// rider-pickup frame (which carries the full order) was re-added as a new
+// ringing order after "Mark Handed Over", and accepting it printed a 2nd bill.
+export const TERMINAL_STATES: ReadonlySet<string> = new Set(["REJECTED", "CANCELLED", "COMPLETED", "IN_TRANSIT"]);
 
 // Same normalisation as normalisePhase, so "cancelled" / " CANCELLED " still count.
 export const isTerminalState = (raw: unknown): boolean =>
@@ -38,10 +41,37 @@ const PHASE_RANK: Record<OrderPhase, number> = {
 // read-replica delay, cache).
 export const GRACE_MS = 120_000;
 
-// Bookkeeping only, never sent to the backend: when the order entered this
-// store. Used ONLY to decide whether a locally-known order is young enough to
-// survive a server list that does not contain it.
-export type StoredOrder = Order & { __receivedAt?: number };
+// Bookkeeping only, never sent to the backend. __receivedAt: when the order
+// entered this store, used ONLY to decide whether a locally-known order is young
+// enough to survive a server list that does not contain it. __phaseAt: when it
+// last moved column here, so a server list fetched BEFORE that move (a cached
+// replay when the Dashboard remounts, an out-of-order response) can never drag
+// it back — an accepted order back in Pending rings and gets accepted twice.
+export type StoredOrder = Order & { __receivedAt?: number; __phaseAt?: number };
+
+// Orders that left this board for good (handed over, rejected, terminal), with
+// when. The socket may never insert one again: any later frame for it would ring
+// as a brand-new order, and a second Accept prints a second bill. A REST list
+// still listing one as active is ignored while that is plausibly lag (GRACE_MS)
+// or the list predates the close; after that the server is believed again.
+// Capped so a dashboard that is never closed cannot grow it forever.
+const CLOSED_MAX = 2000;
+const closedAt = new Map<string, number>();
+
+const markClosed = (orderId: string, at: number): void => {
+  if (closedAt.has(orderId)) return;
+  closedAt.set(orderId, at);
+  if (closedAt.size > CLOSED_MAX) {
+    const oldest = closedAt.keys().next().value;
+    if (oldest !== undefined) closedAt.delete(oldest);
+  }
+};
+
+// The socket may insert an order only if this PC never finished with it. For a
+// PENDING insert, "finished" also means accepted or printed here — in any window.
+const blockedFromSocket = (orderId: string, phase: OrderPhase): boolean =>
+  closedAt.has(orderId) ||
+  (phase === "PENDING" && (getOrderStamp(orderId, "acceptedAt") !== null || wasPrinted(orderId)));
 
 interface DashboardState {
   pendingOrders: StoredOrder[];
@@ -49,7 +79,7 @@ interface DashboardState {
   readyOrders: StoredOrder[];
   
   addPendingOrder: (order: Order) => void;
-  reconcile: (serverOrders: Order[]) => void;
+  reconcile: (serverOrders: Order[], receivedAt?: number) => void;
   setInitialOrders: (orders: Order[]) => void;
   upsertOrder: (order: Partial<Order> & { orderId: string }, phase: OrderPhase) => void;
   moveToAccepted: (orderId: string, preparationTime: number) => void;
@@ -69,13 +99,16 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   // deleting it would empty pendingOrders, stop the ring, and lose the order.
   // Smart-merge: preserves locally-set readyDate/acceptedDate/preparationTime
   // so timers don't reset when the API returns them as null after a poll.
-  reconcile: (serverOrders) => set((state) => {
+  // receivedAt: when this list arrived from the server (RTK fulfilledTimeStamp).
+  // Omitted, the list is treated as fresh.
+  reconcile: (serverOrders, receivedAt) => set((state) => {
     // A failed or malformed poll carries no information — it must never wipe
     // the board, so treat anything that is not a list as "no news".
     if (!Array.isArray(serverOrders)) return state;
 
     // Housekeeping on the normal refresh path — no timer needed.
     pruneLedger();
+    pruneSharedPrinted();
 
     // Build a flat lookup of all orders currently in the store
     const allExisting = [
@@ -92,6 +125,25 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     for (const o of state.pendingOrders) localPhase.set(o.orderId, "PENDING");
     for (const o of state.acceptedOrders) localPhase.set(o.orderId, "ACCEPTED");
     for (const o of state.readyOrders) localPhase.set(o.orderId, "READY_FOR_PICKUP");
+
+    // Rebuilds the closed set after a reload: a terminal order the server lists
+    // can never be re-inserted by a late socket frame either.
+    for (const o of serverOrders) {
+      if (isTerminalState(o?.state)) markClosed(o.orderId, now);
+    }
+
+    // The list was fetched before this order last moved column here, so it
+    // cannot know about that move — it is older news, not a revert.
+    const predatesLocalMove = (orderId: string): boolean => {
+      if (receivedAt === undefined) return false;
+      const local = allExisting.find(e => e.orderId === orderId);
+      return local?.__phaseAt !== undefined && receivedAt < local.__phaseAt;
+    };
+
+    const closedLocally = (orderId: string): boolean => {
+      const t = closedAt.get(orderId);
+      return t !== undefined && (now - t < GRACE_MS || (receivedAt !== undefined && receivedAt < t));
+    };
 
     // This client moved the order forward and stamped the moment it did. While
     // that stamp is fresh, a poll reporting an EARLIER phase is far more likely
@@ -112,8 +164,14 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     const phaseOf = (o: Order): OrderPhase | null => {
       const serverPhase = normalisePhase(o.state);
       if (serverPhase === null) return null;
+      // Handed over / rejected here: a list still showing it active is lag.
+      if (closedLocally(o.orderId)) return null;
       const local = localPhase.get(o.orderId);
-      if (local && PHASE_RANK[serverPhase] < PHASE_RANK[local] && movedHereRecently(o.orderId, local)) {
+      if (
+        local &&
+        PHASE_RANK[serverPhase] < PHASE_RANK[local] &&
+        (movedHereRecently(o.orderId, local) || predatesLocalMove(o.orderId))
+      ) {
         return local;
       }
       return serverPhase;
@@ -140,6 +198,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         // to first receipt instead, any order on the board longer than GRACE_MS
         // was deleted by the first poll that happened to omit it.
         __receivedAt:    now,
+        __phaseAt:       localPhase.get(incoming.orderId) === phase ? existing?.__phaseAt : now,
       };
     };
 
@@ -194,8 +253,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       state.acceptedOrders.some(o => o.orderId === order.orderId) ||
       state.readyOrders.some(o => o.orderId === order.orderId);
       
-    if (exists) return state;
-    
+    if (exists || blockedFromSocket(order.orderId, "PENDING")) return state;
+
     // Naya order hamesha PENDING me jayega
     const newOrder: StoredOrder = { ...order, state: "PENDING", __receivedAt: Date.now() };
     return { pendingOrders: [...state.pendingOrders, newOrder] };
@@ -218,6 +277,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     // is exempt because the REST list is authoritative and must be able to
     // correct a genuine server-side revert.
     if (currentPhase !== null && PHASE_RANK[phase] < PHASE_RANK[currentPhase]) return state;
+    if (currentPhase === null && blockedFromSocket(orderId, phase)) return state;
 
     // setInitialOrders and the columns bucket on `state`, so the phase wins.
     const merged = {
@@ -225,6 +285,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       ...order,
       state: phase,
       __receivedAt: existing?.__receivedAt ?? Date.now(),
+      __phaseAt: currentPhase === phase ? existing?.__phaseAt : Date.now(),
     } as StoredOrder;
 
     // Already in the target column: merge in place so a repeated same-phase
@@ -250,11 +311,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     setOrderStamp(orderId, "acceptedAt", now); // survives page reload
 
     const order = state.pendingOrders[orderIndex];
-    const acceptedOrder: Order = { 
-      ...order, 
+    const acceptedOrder: StoredOrder = {
+      ...order,
       state: "ACCEPTED",
       preparationTime,
-      acceptedDate: now
+      acceptedDate: now,
+      __phaseAt: Date.parse(now),
     };
     
     return {
@@ -271,10 +333,11 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     setOrderStamp(orderId, "readyAt", now); // survives page reload
 
     const order = state.acceptedOrders[orderIndex];
-    const readyOrder: Order = { 
-      ...order, 
+    const readyOrder: StoredOrder = {
+      ...order,
       state: "READY_FOR_PICKUP",
-      readyDate: now
+      readyDate: now,
+      __phaseAt: Date.parse(now),
     };
     
     return {
@@ -283,15 +346,21 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     };
   }),
 
-  removeOrder: (orderId) => set((state) => ({
-    pendingOrders: state.pendingOrders.filter(o => o.orderId !== orderId),
-    acceptedOrders: state.acceptedOrders.filter(o => o.orderId !== orderId),
-    readyOrders: state.readyOrders.filter(o => o.orderId !== orderId),
-  })),
+  removeOrder: (orderId) => set((state) => {
+    markClosed(orderId, Date.now());
+    return {
+      pendingOrders: state.pendingOrders.filter(o => o.orderId !== orderId),
+      acceptedOrders: state.acceptedOrders.filter(o => o.orderId !== orderId),
+      readyOrders: state.readyOrders.filter(o => o.orderId !== orderId),
+    };
+  }),
 
-  clearAll: () => set({
-    pendingOrders: [],
-    acceptedOrders: [],
-    readyOrders: []
-  })
+  clearAll: () => {
+    closedAt.clear();
+    set({
+      pendingOrders: [],
+      acceptedOrders: [],
+      readyOrders: []
+    });
+  }
 }));

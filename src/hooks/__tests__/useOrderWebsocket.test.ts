@@ -427,6 +427,90 @@ describe("socket frames: phantom inserts and the shared terminal set", () => {
     send({ orderId: "QV-GONE", status: "cancelled", orderItem: [{ name: "Tea", itemCount: 1 }] });
     expect(allIds()).toEqual([]);
   });
+
+  // Vendor report: an order accepted at 1:18 rang again at 1:44 as a "new" order
+  // and a second Accept printed a second bill.
+  const ORDER = { orderId: "QV-1318", orderItem: [{ name: "Veg Thali", itemCount: 1 }] };
+
+  it("TC-R1: the rider's IN_TRANSIT frame after Mark Handed Over does not ring the order again", () => {
+    const send = connect();
+    const s = useDashboardStore.getState();
+    send({ ...ORDER, status: "PENDING" });
+    s.moveToAccepted(ORDER.orderId, 15);
+    s.moveToReady(ORDER.orderId);
+    s.removeOrder(ORDER.orderId); // ReadyOrderCard: Mark Handed Over
+
+    send({ ...ORDER, status: "IN_TRANSIT" });
+
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-R2: IN_TRANSIT drops an order still on the board", () => {
+    const send = connect();
+    send({ ...ORDER, status: "PENDING" });
+    useDashboardStore.getState().moveToAccepted(ORDER.orderId, 15);
+    useDashboardStore.getState().moveToReady(ORDER.orderId);
+
+    send({ ...ORDER, status: "IN_TRANSIT" });
+
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-R3: a full order with a status this client does not know is never added as new", () => {
+    const send = connect();
+    send({ ...ORDER, status: "RIDER_ASSIGNED" });
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-R4: no frame re-inserts an order this device already handed over or rejected", () => {
+    const send = connect();
+    send({ ...ORDER, status: "PENDING" });
+    useDashboardStore.getState().removeOrder(ORDER.orderId);
+
+    send({ ...ORDER, status: "PENDING" }); // stale re-broadcast / reconnect backfill
+    send({ ...ORDER });                    // no-status "new order" shape
+
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-R5: a new order with no status, or PENDING, and real items still rings", () => {
+    const send = connect();
+    send({ ...ORDER, orderId: "QV-FRESH" });
+    send({ ...ORDER, orderId: "QV-FRESH-2", status: " pending " });
+    expect(useDashboardStore.getState().pendingOrders.map((o) => o.orderId)).toEqual(["QV-FRESH", "QV-FRESH-2"]);
+  });
+
+  it("TC-R6: odd statuses (blank, number, lower-case in_transit, state-only) never add a ringing order", () => {
+    vi.spyOn(toast, "error").mockImplementation(() => "mock-id");
+    const send = connect();
+    send({ ...ORDER, orderId: "QV-O1", status: "   " });
+    send({ ...ORDER, orderId: "QV-O2", status: 7 });
+    send({ ...ORDER, orderId: "QV-O3", status: " in_transit " });
+    send({ ...ORDER, orderId: "QV-O4", status: null, state: "IN_TRANSIT" });
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-R7: garbage frames never throw and never add anything", () => {
+    const send = connect();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const junk of [null, 42, "text", [], {}, { orderId: 5, orderItem: [{}] }, { orderItem: [{}] }]) {
+      expect(() => send(junk)).not.toThrow();
+    }
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-B1: an order frame with an empty item list inserts no blank card", () => {
+    const send = connect();
+    send({ orderId: "QV-BLANK-1", orderItem: [] });
+    send({ orderId: "QV-BLANK-2", status: "PENDING", orderItem: [] });
+    expect(allIds()).toEqual([]);
+  });
+
+  it("TC-B2: items under `orderItems` (which the card and bill never read) insert no blank card", () => {
+    const send = connect();
+    send({ orderId: "QV-BLANK-3", orderItems: [{ name: "Tea", itemCount: 1 }] });
+    expect(allIds()).toEqual([]);
+  });
 });
 
 // ─── I10: an accept that fails on the wire may already have committed ───

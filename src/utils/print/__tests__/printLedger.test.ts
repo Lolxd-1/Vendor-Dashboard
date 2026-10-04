@@ -9,7 +9,9 @@ import {
   clearPrinted,
   getOrderStamp,
   markPrinted,
+  PRINTED_TTL_MS,
   pruneLedger,
+  pruneSharedPrinted,
   releasePrint,
   setOrderStamp,
   wasPrinted,
@@ -67,6 +69,7 @@ const createFakeStorage = (opts: FakeStorageOptions = {}) => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  localStorage.clear(); // the printed flag is also shared there (cross-window guard)
 });
 
 describe("printLedger", () => {
@@ -101,6 +104,7 @@ describe("printLedger", () => {
   it("TC4 (QUOTA): a setItem that always throws QuotaExceededError never escapes markPrinted/setOrderStamp", () => {
     const storage = createFakeStorage({ failSetItemTimes: Infinity });
     vi.stubGlobal("sessionStorage", storage);
+    vi.stubGlobal("localStorage", createFakeStorage({ failSetItemTimes: Infinity })); // all storage full
 
     expect(() => markPrinted("A")).not.toThrow();
     // Proves this genuinely exercised a throwing setItem, not a no-op: one
@@ -131,6 +135,7 @@ describe("printLedger", () => {
 
   it("TC6 (read failure): a getItem that throws makes wasPrinted false and getOrderStamp null, neither throws", () => {
     vi.stubGlobal("sessionStorage", createFakeStorage({ failGetItem: true }));
+    vi.stubGlobal("localStorage", createFakeStorage({ failGetItem: true }));
 
     expect(() => wasPrinted("A")).not.toThrow();
     expect(wasPrinted("A")).toBe(false);
@@ -233,9 +238,59 @@ describe("printLedger claim/release — concurrent claim yields exactly one", ()
 
   it("TC14 (quota-safe): a storage that always throws never lets claimPrint throw", () => {
     vi.stubGlobal("sessionStorage", createFakeStorage({ failSetItemTimes: Infinity }));
+    vi.stubGlobal("localStorage", createFakeStorage({ failSetItemTimes: Infinity }));
 
     expect(() => claimPrint("QV-1")).not.toThrow();
     expect(() => releasePrint("QV-1")).not.toThrow();
+  });
+});
+
+// Vendor report: two dashboard windows on one PC (Startup shortcut + desktop
+// icon) each had their own sessionStorage, so the same order printed twice.
+describe("printLedger — the printed flag holds across windows", () => {
+  it("TC-W1: an order printed in window A cannot be claimed again in window B", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage()); // window A
+    expect(claimPrint("QV-1318")).toBe(true);
+
+    vi.stubGlobal("sessionStorage", createFakeStorage()); // window B / reopened window
+    expect(wasPrinted("QV-1318")).toBe(true);
+    expect(claimPrint("QV-1318")).toBe(false);
+  });
+
+  it("TC-W2: releasePrint after a total failure frees the order in every window", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    claimPrint("QV-1");
+    releasePrint("QV-1");
+
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    expect(claimPrint("QV-1")).toBe(true);
+  });
+
+  it("TC-W3: a pre-existing per-window flag (written before this release) still blocks", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage({ initial: { qv_printed_OLD: "1" } }));
+    expect(claimPrint("OLD")).toBe(false);
+  });
+
+  it("TC-W4: shared storage blocked or full — the per-window guard still works, nothing throws", () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    vi.stubGlobal("localStorage", createFakeStorage({ failSetItemTimes: Infinity, failGetItem: true }));
+    expect(claimPrint("QV-1")).toBe(true);
+    expect(claimPrint("QV-1")).toBe(false);
+    expect(() => pruneSharedPrinted()).not.toThrow();
+  });
+
+  it("TC-W5: pruneSharedPrinted drops expired and unreadable flags only", () => {
+    const now = Date.parse("2026-10-04T12:00:00.000Z");
+    localStorage.setItem("qv_printed_FRESH", new Date(now - 60_000).toISOString());
+    localStorage.setItem("qv_printed_OLD", new Date(now - PRINTED_TTL_MS - 1).toISOString());
+    localStorage.setItem("qv_printed_JUNK", "1");
+    localStorage.setItem("qv_counter_printer", "EPSON");
+
+    expect(pruneSharedPrinted(now)).toBe(2);
+    expect(localStorage.getItem("qv_printed_FRESH")).not.toBeNull();
+    expect(localStorage.getItem("qv_printed_OLD")).toBeNull();
+    expect(localStorage.getItem("qv_printed_JUNK")).toBeNull();
+    expect(localStorage.getItem("qv_counter_printer")).toBe("EPSON");
   });
 });
 
@@ -392,6 +447,24 @@ describe("usePrintOrder.printBothOnAccept — partial outcomes and claim orderin
     // Promise.all, both concurrent calls would print — 4 requests, not 2.
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("TC-B3: an order with no items never prints, and keeps its claim free for Reprint", async () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true } as Response));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePrintOrder());
+
+    for (const orderItem of [[], undefined, null]) {
+      const order = { ...makeOrder("QV-EMPTY"), orderItem } as unknown as Order;
+      await act(async () => {
+        await result.current.printBothOnAccept(order, 15);
+      });
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/no items/), expect.anything());
+    expect(wasPrinted("QV-EMPTY")).toBe(false);
+  });
 });
 
 // I10: the Accepted card's "Print Bill + KOT" clears its marker only when this
@@ -428,5 +501,18 @@ describe("usePrintOrder.reprint — reports whether every slip got out", () => {
 
   it("TC-RP2: KOT failed → false", async () => {
     expect(await run("Kitchen1")).toBe(false);
+  });
+
+  it("TC-B4: Reprint of an order with no items prints nothing and reports false", async () => {
+    vi.stubGlobal("sessionStorage", createFakeStorage());
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true } as Response));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePrintOrder());
+    let out: boolean | undefined;
+    await act(async () => {
+      out = await result.current.reprint({ ...makeOrder("QV-EMPTY"), orderItem: [] }, "both");
+    });
+    expect(out).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

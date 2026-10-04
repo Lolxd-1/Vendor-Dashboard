@@ -11,6 +11,17 @@ import { claimPrint, releasePrint } from "../utils/print/printLedger";
 const describe = (o: PrintOutcome, label: string) =>
   `${label} → ${o.printer}${o.error ? `: ${o.error}` : ""}`;
 
+// Last line of defence against the "blank bill": whatever path an order took onto
+// the board, one with no items never reaches paper. The next poll brings the full
+// order, and Reprint prints it then.
+const refuseItemless = (order: Order): boolean => {
+  if (Array.isArray(order.orderItem) && order.orderItem.length > 0) return false;
+  toast.error(`Order ${order.orderId} has no items yet — nothing printed. Press Refresh, then Reprint.`, {
+    duration: 8000,
+  });
+  return true;
+};
+
 export const usePrintOrder = () => {
   const [printing, setPrinting] = useState(false);
   const [agentOnline, setAgentOnline] = useState<boolean | null>(null);
@@ -25,6 +36,8 @@ export const usePrintOrder = () => {
   const printBothOnAccept = async (order: Order, prepTime: number) => {
     // Claim BEFORE the awaits: the flag is set while this call still owns the
     // event loop, so a second accept for the same order cannot slip in behind it.
+    // Itemless is checked first so it never takes the claim Reprint will need.
+    if (refuseItemless(order)) return;
     if (!claimPrint(order.orderId)) return;
     setPrinting(true);
     try {
@@ -66,6 +79,7 @@ export const usePrintOrder = () => {
 
   // Resolves true when every requested slip got out (agent or browser window).
   const reprint = async (order: Order, kind: "bill" | "kot" | "both" = "both"): Promise<boolean> => {
+    if (refuseItemless(order)) return false;
     setPrinting(true);
     try {
       const done: { label: string; out: PrintOutcome }[] = [];
