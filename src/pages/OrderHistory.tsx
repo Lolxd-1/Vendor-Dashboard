@@ -3,8 +3,12 @@ import { useAuthStore } from "../stores/useAuthStore";
 import { useGetVendorOrdersQuery } from "../apis/orderApi";
 import FilterBar from "../components/orders/FilterBar";
 import OrderTable from "../components/orders/OrderTable";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw, AlertCircle, Download, Printer } from "lucide-react";
 import { OrderDetailsModal } from "../components/common/OrderDetailsModal";
+import { downloadOrdersCsv } from "../utils/exportOrders";
+import { printItemsSummary } from "../utils/print/itemsSummary";
+import { useLoadAllOrders } from "../hooks/useLoadAllOrders";
+import toast from "react-hot-toast";
 import type { OrderApiResponse } from "../types/order";
 import { OrderStatusFilter, TimeFilterOption } from "../types/filters";
 
@@ -31,17 +35,55 @@ const OrderHistory = () => {
   };
 
   // ─── RTK Query: fetch filtered orders ────────────────────────
+  // Same args are reused by Export / Print Items to load every page of this filter.
+  const orderQueryArgs = {
+    shopId: shopId ?? "",
+    orderStatus: orderStatus.length > 0 ? orderStatus : undefined,
+    timeRange: timeRange,
+    fromTime: formatForBackend(customStartDate),
+    toTime: formatForBackend(customEndDate),
+  };
   const { data: orders = [], isLoading, isError, refetch, isFetching } =
-    useGetVendorOrdersQuery(
-      {
-        shopId: shopId ?? "",
-        orderStatus: orderStatus.length > 0 ? orderStatus : undefined,
-        timeRange: timeRange,
-        fromTime: formatForBackend(customStartDate),
-        toTime: formatForBackend(customEndDate),
-      },
-      { skip: !shopId }
-    );
+    useGetVendorOrdersQuery(orderQueryArgs, { skip: !shopId });
+
+  // ─── Export / Print Items: load all pages, then act ───────────
+  const loadAllOrders = useLoadAllOrders();
+  const [busy, setBusy] = useState<"export" | "print" | null>(null);
+  const exportFilters = { status: orderStatus[0], timeRange, from: customStartDate, to: customEndDate };
+  // Print Items needs a real time period: "All time" would put years of items on paper.
+  const hasPeriod = !!timeRange && (timeRange !== TimeFilterOption.CUSTOM || (!!customStartDate && !!customEndDate));
+  const cannotAct = busy !== null || isLoading || isFetching || isError || orders.length === 0;
+
+  const handleExport = async () => {
+    setBusy("export");
+    try {
+      const all = await loadAllOrders(orderQueryArgs);
+      if (!all) return;
+      if (all.length === 0) {
+        toast.error("No orders found for this filter");
+        return;
+      }
+      downloadOrdersCsv(all, exportFilters);
+      toast.success(`Exported ${all.length} order${all.length !== 1 ? "s" : ""}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handlePrintItems = async () => {
+    setBusy("print");
+    try {
+      const all = await loadAllOrders(orderQueryArgs);
+      if (!all) return;
+      if (all.length === 0) {
+        toast.error("No orders found for this filter");
+        return;
+      }
+      await printItemsSummary(all, exportFilters);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   // ─── Pagination state ────────────────────────────────────────
   const [currentPage, setCurrentPage] = useState(1);
@@ -100,15 +142,39 @@ const handleTimeChange = (time: string) => {
             {orders.length} order{orders.length !== 1 ? "s" : ""} found
           </p>
         </div>
-        {/* Premium refresh button */}
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95"
-        >
-          <RefreshCw size={13} className={isFetching ? "animate-spin" : ""} />
-          {isFetching ? "Refreshing..." : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Export: downloads every order matching the current filters (all pages) */}
+          <button
+            onClick={handleExport}
+            disabled={cannotAct}
+            aria-label="Export"
+            title="Export orders (Excel / CSV)"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95"
+          >
+            <Download size={13} />
+            <span className="hidden sm:inline">{busy === "export" ? "Exporting..." : "Export"}</span>
+          </button>
+          {/* Print Items: one continuous slip of every item in the filtered orders, on the counter printer */}
+          <button
+            onClick={handlePrintItems}
+            disabled={cannotAct || !hasPeriod}
+            aria-label="Print Items"
+            title={hasPeriod ? "Print all items of these orders on one slip" : "Pick a time period first (e.g. Today or Last Week)"}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95"
+          >
+            <Printer size={13} />
+            <span className="hidden sm:inline">{busy === "print" ? "Printing..." : "Print Items"}</span>
+          </button>
+          {/* Premium refresh button */}
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95"
+          >
+            <RefreshCw size={13} className={isFetching ? "animate-spin" : ""} />
+            {isFetching ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

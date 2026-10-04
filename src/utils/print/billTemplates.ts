@@ -8,7 +8,7 @@ interface BillShop {
   fssai: string;
 }
 
-const getShop = (order: Order): BillShop => {
+export const getShop = (order: Order): BillShop => {
   const s = order.shopDetails;
   return {
     name: s?.name || sessionStorage.getItem("vendorName") || "Your Store",
@@ -64,7 +64,7 @@ const itemCols = (name: string, qty: string, price: string, amount: string) =>
 // is missing it, its amount is whatever the sub total leaves after the priced
 // lines (a single-item order: the whole sub total). More than one missing
 // line cannot be split honestly, so those stay "--".
-const lineAmounts = (items: Order["orderItem"], subTotal: number): (number | null)[] => {
+export const lineAmounts = (items: Order["orderItem"], subTotal: number): (number | null)[] => {
   const amounts = items.map((it) => (it.itemPrice ? it.itemPrice * it.itemCount : null));
   const missing = amounts.filter((a) => a === null).length;
   if (missing === 1) {
@@ -74,7 +74,7 @@ const lineAmounts = (items: Order["orderItem"], subTotal: number): (number | nul
   return amounts;
 };
 
-const itemTable = (items: Order["orderItem"], subTotal: number): string[] => {
+export const itemTable = (items: Order["orderItem"], subTotal: number): string[] => {
   const L = [itemCols("Item", "Qty.", "Price", "Amount"), line("-")];
   const amounts = lineAmounts(items, subTotal);
   items.forEach((it, i) => {
@@ -99,7 +99,7 @@ const fulfillment = (order: Order) => {
 };
 
 // Total Qty + Sub Total, the amount under the Amount column.
-const totalsRow = (totalQty: number, subTotal: number) =>
+export const totalsRow = (totalQty: number, subTotal: number) =>
   row(`Total Qty: ${totalQty}`, `Sub Total${money(subTotal).padStart(9)}`);
 
 // ─── 1. COUNTER MAIN BILL — full record, with prices (taxes included) ───
