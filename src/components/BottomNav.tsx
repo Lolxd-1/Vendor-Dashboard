@@ -1,9 +1,10 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, ClipboardList, CalendarClock } from "lucide-react";
+import { LayoutDashboard, ClipboardList, CalendarClock, ChartColumn } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", to: "/vendor/dashboard", icon: LayoutDashboard },
   { label: "Orders",    to: "/vendor/order-history", icon: ClipboardList },
+  { label: "Analytics", to: "/vendor/analytics",     icon: ChartColumn },
   { label: "Schedule",  to: "/vendor/store-status",  icon: CalendarClock },
 ];
 

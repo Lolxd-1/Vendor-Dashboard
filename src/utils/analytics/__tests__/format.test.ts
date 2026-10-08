@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, deltaPct, hourLabel, inr, monthLabel, pctText, rangeLabel, rs, ymd } from "../format";
+import { compactInr, dayLabel, deltaPct, hourLabel, inr, monthLabel, pctText, rangeLabel, rs, ymd } from "../format";
 
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 
@@ -14,6 +14,14 @@ describe("money and percent formatting (TC8)", () => {
   it("rs always shows two decimals for the PDF", () => {
     expect(rs(1234)).toBe("Rs 1,234.00");
     expect(rs(8.9)).toBe("Rs 8.90");
+  });
+
+  it("compactInr shortens axis values in thousands, lakhs and crores", () => {
+    expect(compactInr(950)).toBe("₹950");
+    expect(compactInr(12000)).toBe("₹12k");
+    expect(compactInr(125000)).toBe("₹1.3L");
+    expect(compactInr(30000000)).toBe("₹3Cr");
+    expect(compactInr(0)).toBe("₹0");
   });
 
   it("pctText shows at most one decimal", () => {

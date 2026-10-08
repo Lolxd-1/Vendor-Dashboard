@@ -19,6 +19,15 @@ export const rs = (n: number): string => `${sign(n)}Rs ${EXACTLY_2.format(Math.a
 
 export const pctText = (fraction: number): string => `${UP_TO_1.format(fraction * 100)}%`;
 
+// Chart axis ticks: "₹950", "₹12k", "₹1.2L", "₹3Cr" (lakh and crore, as vendors count).
+export const compactInr = (n: number): string => {
+  const a = Math.abs(n);
+  if (a >= 1e7) return `${sign(n)}₹${UP_TO_1.format(a / 1e7)}Cr`;
+  if (a >= 1e5) return `${sign(n)}₹${UP_TO_1.format(a / 1e5)}L`;
+  if (a >= 1e3) return `${sign(n)}₹${UP_TO_1.format(a / 1e3)}k`;
+  return inr(n);
+};
+
 // Change as a fraction (0.2 = +20%); null when there is nothing to compare with.
 export const deltaPct = (cur: number, prev: number): number | null => (prev > 0 ? (cur - prev) / prev : null);
 

@@ -11,6 +11,7 @@ import ProtectedRoute from './components/common/ProtectedRoute';
 // counter and must never flash a spinner, so only these two are lazy.
 const OrderHistory = lazy(() => import('./pages/OrderHistory'));
 const StoreStatusPage = lazy(() => import('./pages/StoreSchedule'));
+const Analytics = lazy(() => import('./pages/Analytics'));
 
 const RouteFallback = () => (
   <div className="flex items-center justify-center h-full p-8 text-sm text-slate-400 dark:text-zinc-500">
@@ -45,6 +46,14 @@ const App = () => {
             element={
               <Suspense fallback={<RouteFallback />}>
                 <StoreStatusPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="analytics"
+            element={
+              <Suspense fallback={<RouteFallback />}>
+                <Analytics />
               </Suspense>
             }
           />

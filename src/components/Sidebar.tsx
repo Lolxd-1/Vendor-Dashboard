@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Sun, Moon, X, LayoutDashboard, ClipboardList, CalendarClock } from "lucide-react";
+import { Sun, Moon, X, LayoutDashboard, ClipboardList, CalendarClock, ChartColumn } from "lucide-react";
 import { useThemeStore } from "../stores/useThemeStore";
 import { useAuthStore } from "../stores/useAuthStore";
 
@@ -11,6 +11,7 @@ interface SidebarProps {
 const navItems = [
   { label: "Dashboard", to: "/vendor/dashboard", icon: LayoutDashboard },
   { label: "Order History", to: "/vendor/order-history", icon: ClipboardList },
+  { label: "Analytics", to: "/vendor/analytics", icon: ChartColumn },
   { label: "Store Schedule", to: "/vendor/store-status", icon: CalendarClock },
 ];
 
