@@ -247,7 +247,7 @@ export const allTimeRange = (all: Order[], now: Date): DateRange => {
   return { start: startOfDay(first), end: addDays(startOfDay(now), 1) };
 };
 
-const count =(n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 const insightsOf = (
   k: Kpis,
