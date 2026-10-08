@@ -1,8 +1,12 @@
 // QuickVerse commission (10% for most vendors, 5% for some). Until the backend sends it,
 // the vendor sets it on the Analytics page; it is remembered per shop on this device and
 // only changes what the page shows, never a real payout.
+import type { Order } from "../../types/order";
 
 export const DEFAULT_COMMISSION_PCT = 10;
+
+// The vendor's share of an order: item total without delivery fee, platform fee or GST.
+export const orderGross = (o: Order): number => Number(o.amountExcludingDeliveryFee) || 0;
 
 const storageKey = (shopId: string | null) => `qv_commission_pct:${shopId ?? ""}`;
 
