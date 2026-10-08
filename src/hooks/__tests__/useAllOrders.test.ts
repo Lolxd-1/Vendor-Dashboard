@@ -97,6 +97,25 @@ describe("useAllOrders", () => {
     expect(triggerMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a slower load for the previous shop never lands as the new shop's data", async () => {
+    const pending: Record<string, (page: unknown) => void> = {};
+    triggerMock.mockImplementation((args: { shopId: string }) => ({
+      unwrap: () => new Promise((resolve) => (pending[args.shopId] = resolve)),
+    }));
+    const useAllOrders = await freshHook();
+    const shop1 = renderHook(() => useAllOrders("SHOP1"));
+    shop1.unmount(); // logged out mid-load, without a page reload
+    const shop2 = renderHook(() => useAllOrders("SHOP2"));
+
+    await act(async () => pending.SHOP1({ orders: [{ orderId: "SHOP1-ORDER" }], totalPages: 1 }));
+    expect(shop2.result.current.orders).toBeNull();
+    expect(shop2.result.current.progress).not.toBeNull(); // SHOP2 is still loading
+
+    await act(async () => pending.SHOP2({ orders: [{ orderId: "SHOP2-ORDER" }], totalPages: 1 }));
+    expect(shop2.result.current.orders?.map((o) => o.orderId)).toEqual(["SHOP2-ORDER"]);
+    expect(triggerMock.mock.calls.filter((c) => c[0].shopId === "SHOP2")).toHaveLength(1);
+  });
+
   it("never returns another shop's orders", async () => {
     triggerMock.mockImplementation((args: { page: number }) => pageOf(args.page, 1));
     const useAllOrders = await freshHook();

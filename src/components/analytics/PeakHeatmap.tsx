@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { hourLabel } from "../../utils/analytics/format";
+import { WEEKDAY_NAMES, hourLabel } from "../../utils/analytics/format";
+import { peakCell } from "../../utils/analytics/report";
 import { AXIS_TEXT, SEQ_SCOPE, seqFill } from "./colors";
 import { EmptyNote } from "./ui";
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const FULL_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS = WEEKDAY_NAMES.map((d) => d.slice(0, 3));
 // Five steps, light → dark. More than ~7 colour classes stop being readable.
 const LEVELS = [0.16, 0.32, 0.5, 0.72, 1];
 
@@ -16,14 +16,14 @@ export const PeakHeatmap = ({ cells, max }: { cells: number[][]; max: number }) 
   const [hover, setHover] = useState<{ d: number; h: number } | null>(null);
   if (max === 0) return <EmptyNote text="No orders in this period." />;
 
-  const peak = cells.flat().indexOf(max);
-  const summary = `Busiest: ${FULL_DAYS[Math.floor(peak / 24)]} ${hourLabel(peak % 24)} with ${orders(max)}`;
+  const peak = peakCell({ cells, max });
+  const summary = `Busiest: ${WEEKDAY_NAMES[peak.day]} ${hourLabel(peak.hour)} with ${orders(max)}`;
 
   return (
     <div className={SEQ_SCOPE}>
       <p className="mb-2 h-4 text-xs text-slate-600 dark:text-zinc-300">
         {hover
-          ? `${FULL_DAYS[hover.d]} ${hourLabel(hover.h)}–${hourLabel((hover.h + 1) % 24)}: ${orders(cells[hover.d][hover.h])}`
+          ? `${WEEKDAY_NAMES[hover.d]} ${hourLabel(hover.h)}–${hourLabel((hover.h + 1) % 24)}: ${orders(cells[hover.d][hover.h])}`
           : summary}
       </p>
       <div className="overflow-x-auto">

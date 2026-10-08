@@ -4,7 +4,7 @@
 import type { Order } from "../../types/order";
 import { commissionOf, orderGross, round2 } from "./commission";
 import { cohortRetention, customerKey, customerStats, type CohortRow, type CustomerStats } from "./customers";
-import { dayLabel, deltaPct, hourLabel, inr, monthLabel, pctText, ymd } from "./format";
+import { WEEKDAY_NAMES, dayLabel, deltaPct, hourLabel, inr, monthLabel, pctText, ymd } from "./format";
 import { itemPairs, itemStats, median, type ItemPair, type ItemRow } from "./items";
 import {
   addDays,
@@ -107,8 +107,14 @@ const timed = (orders: Order[]): Timed[] =>
 
 const isCompleted = (o: Order) => bucketOf(o.state) === "completed";
 
-const unitsOf = (o: Order) =>
+export const unitsOf = (o: Order): number =>
   o.orderItem?.length ? o.orderItem.reduce((s, it) => s + (it.itemCount || 0), 0) : Number(o.totalItemCount) || 0;
+
+// Busiest weekday (Mon = 0) and hour of the heatmap.
+export const peakCell = (heatmap: AnalyticsReport["heatmap"]): { day: number; hour: number } => {
+  const i = heatmap.cells.flat().indexOf(heatmap.max);
+  return { day: Math.floor(i / 24), hour: i % 24 };
+};
 
 const moneyOf = (completed: Order[], pct: number) => {
   let gross = 0;
@@ -241,8 +247,7 @@ export const allTimeRange = (all: Order[], now: Date): DateRange => {
   return { start: startOfDay(first), end: addDays(startOfDay(now), 1) };
 };
 
-const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const count =(n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 const insightsOf = (
   k: Kpis,
@@ -264,11 +269,10 @@ const insightsOf = (
   }
 
   if (heatmap.max >= 2) {
-    const i = heatmap.cells.flat().indexOf(heatmap.max);
-    const h = i % 24;
+    const { day, hour } = peakCell(heatmap);
     out.push({
       tone: "info",
-      text: `Busiest time: ${WEEKDAY_NAMES[Math.floor(i / 24)]} ${hourLabel(h)}–${hourLabel((h + 1) % 24)} (${count(heatmap.max, "order")}). Keep the kitchen ready then.`,
+      text: `Busiest time: ${WEEKDAY_NAMES[day]} ${hourLabel(hour)}–${hourLabel((hour + 1) % 24)} (${count(heatmap.max, "order")}). Keep the kitchen ready then.`,
     });
   }
 

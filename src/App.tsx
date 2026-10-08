@@ -8,7 +8,7 @@ import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/common/ProtectedRoute';
 
 // Non-dashboard routes are code-split: the dashboard is the landing surface on a shop
-// counter and must never flash a spinner, so only these two are lazy.
+// counter and must never flash a spinner, so only these are lazy.
 const OrderHistory = lazy(() => import('./pages/OrderHistory'));
 const StoreStatusPage = lazy(() => import('./pages/StoreSchedule'));
 const Analytics = lazy(() => import('./pages/Analytics'));

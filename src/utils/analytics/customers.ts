@@ -7,6 +7,15 @@ import { inRange, parseOrderTime, type DateRange } from "./period";
 
 export type SegmentKey = "champions" | "repeat" | "new" | "atRisk" | "lapsed";
 
+// What each segment means and what to do about it (page and PDF show the same words).
+export const SEGMENT_INFO: { key: SegmentKey; label: string; rule: string; action: string }[] = [
+  { key: "champions", label: "Champions", rule: "3+ orders, active in 30 days", action: "Reward them" },
+  { key: "repeat", label: "Repeat", rule: "2 orders, active in 30 days", action: "Nudge a 3rd order" },
+  { key: "new", label: "New", rule: "1 order in the last 30 days", action: "Win the 2nd order" },
+  { key: "atRisk", label: "At risk", rule: "Last order 31–60 days ago", action: "Send an offer" },
+  { key: "lapsed", label: "Lapsed", rule: "No order for 60+ days", action: "Try to win back" },
+];
+
 export interface CustomerRow {
   key: string;
   name: string;
@@ -128,7 +137,11 @@ export const cohortRetention = (allCompleted: Order[], now: Date, maxCohorts = 6
   }
 
   const cohorts = new Map<number, string[]>();
-  for (const [key, m] of firstMonth) cohorts.set(m, [...(cohorts.get(m) || []), key]);
+  for (const [key, m] of firstMonth) {
+    const list = cohorts.get(m) || [];
+    list.push(key);
+    cohorts.set(m, list);
+  }
 
   const nowMonth = monthIndex(now);
   return [...cohorts.keys()]

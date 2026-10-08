@@ -1,14 +1,8 @@
 import { useState } from "react";
 import type { SeriesPoint } from "../../utils/analytics/report";
-import { compactInr, dayLabel, inr, monthLabel } from "../../utils/analytics/format";
+import { compactInr, dayLabel, inr, monthLabel, niceStep } from "../../utils/analytics/format";
 import { AXIS_TEXT, GRID_LINE } from "./colors";
 import { EmptyNote } from "./ui";
-
-// Round axis steps (1, 2, 2.5, 5 × 10ⁿ) so ticks read ₹0 / ₹500 / ₹1k, not ₹0 / ₹437.
-const niceStep = (raw: number) => {
-  const p = 10 ** Math.floor(Math.log10(raw));
-  return ([1, 2, 2.5, 5, 10].find((m) => raw <= m * p) ?? 10) * p;
-};
 
 const xLabel = (p: SeriesPoint, i: number, grain: "day" | "month", many: boolean) => {
   if (grain === "month") return monthLabel(p.start).slice(0, 3);
@@ -31,7 +25,7 @@ export const SalesTrendChart = ({ points, grain }: { points: SeriesPoint[]; grai
   const tip = active === null ? null : points[active];
 
   return (
-    <div className="overflow-hidden pr-2">
+    <div className="overflow-hidden pt-2 pr-2">
       <div className="relative ml-11 h-48 lg:h-56">
         {ticks.map((t) => (
           <div key={t} className={`absolute inset-x-0 border-t ${GRID_LINE}`} style={{ bottom: `${(t / top) * 100}%` }}>

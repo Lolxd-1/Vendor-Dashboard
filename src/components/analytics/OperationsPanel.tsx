@@ -1,18 +1,15 @@
 import type { AnalyticsReport, PaymentSplit } from "../../utils/analytics/report";
-import { inr } from "../../utils/analytics/format";
+import { inr, paymentLabel } from "../../utils/analytics/format";
 import { SERIES, STATUS_BG } from "./colors";
 import { SplitBar } from "./ui";
 
 // Each method keeps its colour whatever its rank, so "COD" is always the same blue.
-const METHODS: Record<string, { label: string; color: string }> = {
-  COD: { label: "Cash on delivery", color: SERIES[0] },
-  PREPAID: { label: "Prepaid", color: SERIES[1] },
-  QR_CODE: { label: "QR code", color: SERIES[2] },
-  ONLINE: { label: "Online", color: SERIES[3] },
+const METHOD_COLORS: Record<string, string> = {
+  COD: SERIES[0],
+  PREPAID: SERIES[1],
+  QR_CODE: SERIES[2],
+  ONLINE: SERIES[3],
 };
-
-const methodLabel = (m: string) =>
-  METHODS[m]?.label ?? (m === "UNKNOWN" ? "Not recorded" : m.charAt(0) + m.slice(1).toLowerCase().replace(/_/g, " "));
 
 const label = "mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-400";
 
@@ -44,9 +41,9 @@ export const OperationsPanel = ({
       <SplitBar
         ariaLabel="Completed sales by payment method"
         segments={payments.map((p) => ({
-          label: methodLabel(p.method),
+          label: paymentLabel(p.method),
           value: p.gross,
-          color: METHODS[p.method]?.color ?? STATUS_BG.neutral,
+          color: METHOD_COLORS[p.method] ?? STATUS_BG.neutral,
           display: `${p.orders} · ${inr(p.gross)}`,
         }))}
       />

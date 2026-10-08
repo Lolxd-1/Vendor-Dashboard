@@ -1,14 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { compactInr, dayLabel, deltaPct, hourLabel, inr, monthLabel, pctText, rangeLabel, rs, ymd } from "../format";
+import {
+  compactInr,
+  dayLabel,
+  deltaPct,
+  hourLabel,
+  inr,
+  monthLabel,
+  niceStep,
+  paymentLabel,
+  pctText,
+  rangeLabel,
+  rs,
+  ymd,
+} from "../format";
 
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d);
 
 describe("money and percent formatting (TC8)", () => {
-  it("inr uses Indian grouping and drops trailing zeros", () => {
-    expect(inr(123456.5)).toBe("₹1,23,456.5");
+  it("inr uses Indian grouping, whole rupees bare and paise always as two digits", () => {
+    expect(inr(123456.5)).toBe("₹1,23,456.50");
+    expect(inr(2265.5)).toBe("₹2,265.50");
+    expect(inr(6200)).toBe("₹6,200");
     expect(inr(0)).toBe("₹0");
     expect(inr(1234.567)).toBe("₹1,234.57");
     expect(inr(-50)).toBe("-₹50");
+    expect(inr(-0.001)).toBe("₹0");
+  });
+
+  it("paymentLabel names methods the same on the page and in the PDF", () => {
+    expect(paymentLabel("COD")).toBe("Cash on delivery");
+    expect(paymentLabel("QR_CODE")).toBe("QR code");
+    expect(paymentLabel("UNKNOWN")).toBe("Not recorded");
+    expect(paymentLabel("UPI_COLLECT")).toBe("Upi collect");
+  });
+
+  it("niceStep rounds axis steps to 1, 2, 2.5 or 5 × 10ⁿ", () => {
+    expect(niceStep(437)).toBe(500);
+    expect(niceStep(1200)).toBe(2000);
+    expect(niceStep(2100)).toBe(2500);
+    expect(niceStep(10)).toBe(10);
   });
 
   it("rs always shows two decimals for the PDF", () => {

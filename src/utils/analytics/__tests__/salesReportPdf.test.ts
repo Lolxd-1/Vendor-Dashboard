@@ -36,7 +36,7 @@ const NOW = new Date(2026, 9, 8, 15);
 const WEEK = settlementWeekOf(NOW);
 const ORDERS = [
   order("1952034839600505", "COMPLETED", "2026-10-05 10:00:00", 110, { customerId: 1, isSettled: true }),
-  order("5075472670776885", "COMPLETED", "2026-10-06 19:30:00", 89.1, { customerId: 2, paymentMethod: "PREPAID" }),
+  order("5075472670776885", "COMPLETED", "2026-10-06 19:30:00", 89.1, { customerId: 2, paymentMethod: "QR_CODE" }),
   order("5509702345373439", "CANCELLED", "2026-10-06 20:00:00", 256, { customerId: 3 }),
   order("4476755985228596", "REJECTED", "2026-10-07 21:00:00", 83, { customerId: 4 }),
   order("6355225790592262", "READY_FOR_PICKUP", "2026-10-08 12:00:00", 236, { customerId: 5 }),
@@ -98,6 +98,8 @@ describe("buildSalesReportPdf", () => {
       "1952034839600505",
       "6355225790592262",
       "Ready for", // "Ready for pickup" wraps inside the narrow status column
+      "Cash on delivery", // payment mix uses the page's names
+      "QR code",
       "Completed orders total \\(3\\)", // PDF strings escape parentheses
     ]) {
       expect(pdf).toContain(text);

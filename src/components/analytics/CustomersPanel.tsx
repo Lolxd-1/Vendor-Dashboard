@@ -1,15 +1,7 @@
-import type { CohortRow, CustomerStats, SegmentKey } from "../../utils/analytics/customers";
+import { SEGMENT_INFO, type CohortRow, type CustomerStats } from "../../utils/analytics/customers";
 import { dayLabel, inr, pctText } from "../../utils/analytics/format";
 import { SEQ_SCOPE, SERIES, seqFill } from "./colors";
 import { SplitBar } from "./ui";
-
-const SEGMENTS: { key: SegmentKey; label: string; rule: string; action: string }[] = [
-  { key: "champions", label: "Champions", rule: "3+ orders, active in 30 days", action: "Reward them" },
-  { key: "repeat", label: "Repeat", rule: "2 orders, active in 30 days", action: "Nudge a 3rd order" },
-  { key: "new", label: "New", rule: "1 order in the last 30 days", action: "Win the 2nd order" },
-  { key: "atRisk", label: "At risk", rule: "Last order 31–60 days ago", action: "Send an offer" },
-  { key: "lapsed", label: "Lapsed", rule: "No order for 60+ days", action: "Try to win back" },
-];
 
 const label = "mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-400";
 
@@ -45,7 +37,7 @@ export const CustomersPanel = ({ customers, cohorts }: { customers: CustomerStat
       <div>
         <p className={label}>Customer segments (as of period end)</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {SEGMENTS.map((s) => (
+          {SEGMENT_INFO.map((s) => (
             <div key={s.key} className="rounded-xl border border-slate-200 dark:border-zinc-800 p-2.5">
               <p className="text-lg font-black text-slate-900 dark:text-zinc-100">{customers.segments[s.key]}</p>
               <p className="text-xs font-semibold text-slate-700 dark:text-zinc-200">{s.label}</p>

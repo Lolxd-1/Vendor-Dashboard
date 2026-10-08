@@ -162,6 +162,7 @@ describe("Download PDF", () => {
     pdfMock.mockResolvedValue(undefined);
     render(<Analytics />);
     await click(screen.getByRole("button", { name: "Previous settlement week" }));
+    vi.setSystemTime(new Date(2026, 9, 8, 15, 30)); // the vendor downloads half an hour later
     await click(screen.getByRole("button", { name: /Download PDF/ }));
 
     expect(pdfMock).toHaveBeenCalledTimes(1);
@@ -169,6 +170,7 @@ describe("Download PDF", () => {
     expect(report.range.start).toEqual(new Date(2026, 8, 28));
     expect(report.kpis.net).toBe(1080);
     expect(meta).toEqual({ shopName: "Store #SHOP1", periodLabel: "Settlement week", isSettlementWeek: true });
+    expect(report.generatedAt).toEqual(new Date(2026, 9, 8, 15, 30)); // stamped at download, not at the last click
     expect(toastMock.success).toHaveBeenCalledWith("Sales report downloaded");
   });
 

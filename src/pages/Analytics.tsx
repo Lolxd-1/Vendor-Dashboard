@@ -28,7 +28,7 @@ import { ItemsPanel } from "../components/analytics/ItemsPanel";
 import { CustomersPanel } from "../components/analytics/CustomersPanel";
 
 const chip =
-  "flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95";
+  "flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 text-xs font-semibold hover:bg-[#1e40af]/10 hover:border-[#1e40af]/30 hover:text-[#1e40af] dark:hover:bg-blue-500/10 dark:hover:text-blue-400 transition-all duration-200 disabled:opacity-50 active:scale-95";
 
 const TONES: Record<Insight["tone"], { icon: typeof Lightbulb; cls: string }> = {
   good: { icon: CheckCircle2, cls: "text-[#0ca30c]" },
@@ -115,7 +115,8 @@ const Analytics = () => {
     if (!report) return;
     setPdfBusy(true);
     try {
-      await downloadSalesReportPdf(report, {
+      // Stamped with the moment of download, not the vendor's last click.
+      await downloadSalesReportPdf({ ...report, generatedAt: new Date() }, {
         shopName:
           sessionStorage.getItem("vendorName") ||
           orders?.find((o) => o.shopDetails?.name)?.shopDetails?.name ||
@@ -139,10 +140,11 @@ const Analytics = () => {
           <h2 className="text-lg font-bold text-slate-900 dark:text-zinc-100 lg:text-xl lg:font-semibold">Analytics</h2>
           <p className="mt-0.5 text-xs text-slate-400 dark:text-zinc-500">
             Sales and payouts count completed orders only
-            {loadedAt && ` · updated ${loadedAt.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`}
+            {loadedAt &&
+              ` · updated ${loadedAt.toDateString() === now.toDateString() ? "" : `${dayLabel(loadedAt)}, `}${loadedAt.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CommissionControl pct={pct} onChange={changePct} />
           <button type="button" onClick={downloadPdf} disabled={!report || pdfBusy} className={chip}>
             <FileDown size={13} />

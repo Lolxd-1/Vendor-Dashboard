@@ -3,10 +3,23 @@
 // tables (crisp at any zoom); jsPDF is fetched only when the vendor clicks Download.
 import type { jsPDF } from "jspdf";
 import type { UserOptions } from "jspdf-autotable";
-import { bucketOf, type AnalyticsReport, type OrderBucket } from "./report";
+import { bucketOf, peakCell, unitsOf, type AnalyticsReport, type OrderBucket } from "./report";
 import { commissionOf, orderGross, round2 } from "./commission";
+import { SEGMENT_INFO } from "./customers";
 import { addDays, parseOrderTime, payoutDateOf, type DateRange } from "./period";
-import { compactInr, dayLabel, deltaPct, hourLabel, pctText, rangeLabel, rs, ymd } from "./format";
+import {
+  WEEKDAY_NAMES,
+  compactInr,
+  dayLabel,
+  deltaPct,
+  hourLabel,
+  niceStep,
+  paymentLabel,
+  pctText,
+  rangeLabel,
+  rs,
+  ymd,
+} from "./format";
 
 export interface ReportMeta {
   shopName: string;
@@ -49,24 +62,16 @@ const STATUS_LABEL: Record<OrderBucket, string> = {
   open: "In progress / other",
 };
 
-const SEGMENT_ROWS = [
-  ["champions", "Champions", "3+ orders, active in 30 days", "Reward them"],
-  ["repeat", "Repeat", "2 orders, active in 30 days", "Nudge a 3rd order"],
-  ["new", "New", "1 order in the last 30 days", "Win the 2nd order"],
-  ["atRisk", "At risk", "Last order 31-60 days ago", "Send an offer"],
-  ["lapsed", "Lapsed", "No order for 60+ days", "Try to win back"],
-] as const;
-
 const pad = (n: number) => String(n).padStart(2, "0");
 const clock = (d: Date) => `${d.getHours() % 12 || 12}:${pad(d.getMinutes())} ${d.getHours() < 12 ? "AM" : "PM"}`;
 const stamp = (d: Date) => `${dayLabel(d)} ${d.getFullYear()}, ${clock(d)}`;
-const pretty = (s: string) => (s.length <= 3 ? s : s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, " "));
+const sentence = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, " ");
 const signed = (d: number | null) => (d === null ? "No earlier data" : `${d >= 0 ? "+" : "-"}${pctText(Math.abs(d))} vs prev. period`);
+// The annexure's payment column is narrow: "COD" there, full names everywhere else.
+const shortPayment = (method: string) => (method === "COD" ? "COD" : paymentLabel(method || "UNKNOWN"));
 
 const niceTop = (max: number) => {
-  const raw = max / 4;
-  const p = 10 ** Math.floor(Math.log10(raw));
-  const step = ([1, 2, 2.5, 5, 10].find((m) => raw <= m * p) ?? 10) * p;
+  const step = niceStep(max / 4);
   return step * Math.ceil(max / step);
 };
 
@@ -111,8 +116,16 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
   type Cell = string | { content: string; colSpan: number; styles: { halign: "right" } };
   const clean = (rows: Cell[][] | undefined) =>
     rows?.map((r) => r.map((c) => (typeof c === "string" ? pdfText(c) : { ...c, content: pdfText(c.content) })));
-  const table = (opts: Omit<UserOptions, "head" | "body" | "foot"> & { head?: Cell[][]; body: Cell[][]; foot?: Cell[][] }) => {
+  // `numeric` columns are right-aligned in the header, every row and the total alike.
+  const table = ({
+    numeric = [],
+    ...opts
+  }: Omit<UserOptions, "head" | "body" | "foot"> & { head?: Cell[][]; body: Cell[][]; foot?: Cell[][]; numeric?: number[] }) => {
+    ensure(opts.head ? 22 : 12); // never strand a header (or a lone row) at the foot of a page
     autoTable(doc, {
+      didParseCell: (data) => {
+        if (numeric.includes(data.column.index) && data.cell.colSpan === 1) data.cell.styles.halign = "right";
+      },
       startY: y,
       margin: { left: M, right: M, bottom: 18, top: 18 },
       theme: "plain",
@@ -128,7 +141,6 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     });
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
   };
-  const right = (...cols: number[]) => Object.fromEntries(cols.map((c) => [c, { halign: "right" as const }]));
 
   // ── Header band ───────────────────────────────────────────────
   doc.setFillColor(...NAVY);
@@ -210,7 +222,8 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     alternateRowStyles: {},
     styles: { font: "helvetica", fontSize: 9, textColor: INK, cellPadding: { top: 2.2, bottom: 2.2, left: 3, right: 3 } },
     footStyles: { fillColor: NAVY, textColor: WHITE, fontStyle: "bold", fontSize: 10.5 },
-    columnStyles: { 1: { halign: "right", cellWidth: 50 } },
+    columnStyles: { 1: { cellWidth: 50 } },
+    numeric: [1],
     body: [
       [`Gross sales from ${k.completed} completed order${k.completed === 1 ? "" : "s"} (item value)`, rs(k.gross)],
       [`Less: QuickVerse commission @ ${pct}%`, `- ${rs(k.commission)}`],
@@ -232,7 +245,7 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
   const buckets = Object.keys(STATUS_LABEL) as OrderBucket[];
   section("Order summary", `${k.orders} orders placed`);
   table({
-    columnStyles: right(1, 2, 3),
+    numeric: [1, 2, 3],
     head: [["Status", "Orders", "Share", "Order value (items)"]],
     body: buckets.map((b) => [STATUS_LABEL[b], String(counts[b]), k.orders ? pctText(counts[b] / k.orders) : "0%", rs(valueOf(b))]),
     foot: [["Total", String(k.orders), k.orders ? "100%" : "0%", rs(round2(buckets.reduce((s, b) => s + valueOf(b), 0)))]],
@@ -276,7 +289,7 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     y = base + 10;
   }
   table({
-    columnStyles: right(1, 2, 3, 4, 5),
+    numeric: [1, 2, 3, 4, 5],
     head: [[report.series.grain === "day" ? "Date" : "Month", "Orders", "Completed", "Gross sales", "Commission", "Net payout"]],
     body: points.map((p) => [
       p.label,
@@ -297,7 +310,8 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     y += 8;
   } else {
     table({
-      columnStyles: { 0: { cellWidth: 8 }, ...right(2, 3, 4, 5) },
+      columnStyles: { 0: { cellWidth: 8 } },
+      numeric: [2, 3, 4, 5],
       head: [["#", "Item", "Units", "Orders", "Sales", "Share"]],
       body: report.items
         .slice(0, 15)
@@ -310,7 +324,7 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     }
     if (report.pairs.length > 0) {
       table({
-        columnStyles: right(1),
+        numeric: [1],
         head: [["Frequently bought together", "Orders"]],
         body: report.pairs.map((p) => [`${p.a} + ${p.b}`, String(p.orders)]),
       });
@@ -321,7 +335,7 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
   const c = report.customers;
   section("Customers", "New = first-ever order with this shop");
   table({
-    columnStyles: right(1, 2),
+    numeric: [1, 2],
     head: [["Customers", "Count", "Sales"]],
     body: [
       ["Unique customers", String(c.unique), rs(round2(c.newSales + c.returningSales))],
@@ -331,13 +345,13 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
     ],
   });
   table({
-    columnStyles: right(1),
+    numeric: [1],
     head: [["Segment (as of period end)", "Customers", "Rule", "Suggested action"]],
-    body: SEGMENT_ROWS.map(([key, label, rule, action]) => [label, String(c.segments[key]), rule, action]),
+    body: SEGMENT_INFO.map((s) => [s.label, String(c.segments[s.key]), s.rule, s.action]),
   });
   if (c.top.length > 0) {
     table({
-      columnStyles: right(1, 2),
+      numeric: [1, 2],
       head: [["Top customers", "Orders", "Spend", "Last order"]],
       body: c.top.map((t) => [t.name || "Customer", String(t.orders), rs(t.spend), dayLabel(t.lastOrder)]),
     });
@@ -348,15 +362,14 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
   const paid = report.payments.reduce((s, p) => s + p.gross, 0);
   if (report.payments.length > 0) {
     table({
-      columnStyles: right(1, 2, 3),
+      numeric: [1, 2, 3],
       head: [["Payment method", "Orders", "Sales", "Share"]],
-      body: report.payments.map((p) => [pretty(p.method), String(p.orders), rs(p.gross), paid ? pctText(p.gross / paid) : "0%"]),
+      body: report.payments.map((p) => [paymentLabel(p.method), String(p.orders), rs(p.gross), paid ? pctText(p.gross / paid) : "0%"]),
     });
   }
-  const peak = report.heatmap.cells.flat().indexOf(report.heatmap.max);
-  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const peak = peakCell(report.heatmap);
   table({
-    columnStyles: right(1),
+    numeric: [1],
     head: [["Operations", "Value"]],
     body: [
       ["Median time to accept an order", report.timing.medianAcceptMin === null ? "-" : `${report.timing.medianAcceptMin} min`],
@@ -364,7 +377,7 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
       [
         "Busiest hour",
         report.heatmap.max > 0
-          ? `${DAYS[Math.floor(peak / 24)]} ${hourLabel(peak % 24)} (${report.heatmap.max} orders)`
+          ? `${WEEKDAY_NAMES[peak.day]} ${hourLabel(peak.hour)} (${report.heatmap.max} orders)`
           : "-",
       ],
     ],
@@ -399,22 +412,22 @@ export const buildSalesReportPdf = async (report: AnalyticsReport, meta: ReportM
   table({
     styles: { font: "helvetica", fontSize: 6.8, textColor: INK, cellPadding: { top: 1.3, bottom: 1.3, left: 1.5, right: 1.5 } },
     headStyles: { fillColor: NAVY, textColor: WHITE, fontStyle: "bold", fontSize: 6.8 },
-    columnStyles: { 0: { cellWidth: 7 }, ...right(4, 7, 8, 9) },
+    columnStyles: { 0: { cellWidth: 7 } },
+    numeric: [4, 7, 8, 9],
     head: [["#", "Order ID", "Date & time", "Customer", "Items", "Payment", "Status", "Order value", "Commission", "Net"]],
     body: [...report.orders].reverse().map((o, i) => {
       const b = bucketOf(o.state);
       const g = orderGross(o);
       const fee = commissionOf(g, pct);
       const t = parseOrderTime(o.creationTime);
-      const units = o.orderItem?.length ? o.orderItem.reduce((s, it) => s + (it.itemCount || 0), 0) : Number(o.totalItemCount) || 0;
       return [
         String(i + 1),
         String(o.orderId ?? ""),
         t ? stamp(t) : "",
         (o.customerName || "").trim() || "-",
-        String(units),
-        pretty((o.paymentMethod || "").trim().toUpperCase()) || "-",
-        b === "open" ? pretty(String(o.state || "").trim().toUpperCase()) || "-" : STATUS_LABEL[b],
+        String(unitsOf(o)),
+        shortPayment((o.paymentMethod || "").trim().toUpperCase()),
+        b === "open" ? sentence(String(o.state || "").trim().toUpperCase()) || "-" : STATUS_LABEL[b],
         rs(g),
         b === "completed" ? rs(fee) : "-",
         b === "completed" ? rs(round2(g - fee)) : "-",

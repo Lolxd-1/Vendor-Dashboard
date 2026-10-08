@@ -29,29 +29,32 @@ const useAllOrdersStore = create<AllOrdersState>(() => ({
   progress: null,
 }));
 
-// One load per shop at a time: StrictMode's double effect or two callers share it.
-let inflight: string | null = null;
+// The load whose results may still be written. StrictMode's double effect or two callers
+// share it; a newer load (e.g. another shop logged in without a page reload) replaces it,
+// and the older one's late results are then dropped instead of landing as the new shop's.
+let current: { shopId: string } | null = null;
 
 const load = (shopId: string, fetchPage: (page: number) => Promise<VendorOrdersPage>, force: boolean) => {
   const state = useAllOrdersStore.getState();
-  if (inflight === shopId || (!force && state.shopId === shopId && state.orders)) return;
-  inflight = shopId;
+  if (current?.shopId === shopId || (!force && state.shopId === shopId && state.orders)) return;
+  const ticket = { shopId };
+  current = ticket;
+  const write = (partial: Partial<AllOrdersState>) => {
+    if (current === ticket) useAllOrdersStore.setState(partial);
+  };
   useAllOrdersStore.setState({
     ...(state.shopId === shopId ? {} : { shopId, orders: null, loadedAt: null }),
     error: null,
     progress: { loaded: 0, total: 1 },
   });
 
-  fetchAllOrderPages(fetchPage, (loaded, total) => useAllOrdersStore.setState({ progress: { loaded, total } }))
-    .then((orders) => useAllOrdersStore.setState({ orders, loadedAt: new Date(), progress: null }))
+  fetchAllOrderPages(fetchPage, (loaded, total) => write({ progress: { loaded, total } }))
+    .then((orders) => write({ orders, loadedAt: new Date(), progress: null }))
     .catch((err: unknown) =>
-      useAllOrdersStore.setState({
-        error: err instanceof Error ? err.message : "network or server error",
-        progress: null,
-      })
+      write({ error: err instanceof Error ? err.message : "network or server error", progress: null })
     )
     .finally(() => {
-      inflight = null;
+      if (current === ticket) current = null;
     });
 };
 
