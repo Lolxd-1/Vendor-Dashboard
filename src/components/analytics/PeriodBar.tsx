@@ -1,20 +1,10 @@
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { payoutDateOf, type DateRange, type PeriodPreset } from "../../utils/analytics/period";
+import { PRESET_LABELS, payoutDateOf, type DateRange, type PeriodPreset } from "../../utils/analytics/period";
 import { dayLabel, rangeLabel } from "../../utils/analytics/format";
 
-const PRESETS: { value: PeriodPreset; label: string }[] = [
-  { value: "SETTLEMENT_WEEK", label: "Settlement week" },
-  { value: "TODAY", label: "Today" },
-  { value: "YESTERDAY", label: "Yesterday" },
-  { value: "LAST_30_DAYS", label: "Last 30 days" },
-  { value: "THIS_MONTH", label: "This month" },
-  { value: "LAST_MONTH", label: "Last month" },
-  { value: "THIS_YEAR", label: "This year" },
-  { value: "ALL_TIME", label: "All time" },
-  { value: "CUSTOM", label: "Custom" },
-];
+const PRESETS = Object.keys(PRESET_LABELS) as PeriodPreset[];
 
 // Same pill look as Order History's FilterBar.
 const pillBase =
@@ -50,13 +40,13 @@ export const PeriodBar = ({
     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar lg:flex-wrap">
       {PRESETS.map((p) => (
         <button
-          key={p.value}
+          key={p}
           type="button"
-          onClick={() => onPreset(p.value)}
-          aria-pressed={preset === p.value}
-          className={`${pillBase} ${preset === p.value ? pillActive : pillInactive}`}
+          onClick={() => onPreset(p)}
+          aria-pressed={preset === p}
+          className={`${pillBase} ${preset === p ? pillActive : pillInactive}`}
         >
-          {p.label}
+          {PRESET_LABELS[p]}
         </button>
       ))}
     </div>

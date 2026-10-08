@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, Lightbulb, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
+import toast from "react-hot-toast";
+import { AlertCircle, AlertTriangle, CheckCircle2, FileDown, Lightbulb, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { useAuthStore } from "../stores/useAuthStore";
 import { useAllOrders } from "../hooks/useAllOrders";
 import { allTimeRange, buildReport, type Insight } from "../utils/analytics/report";
 import {
+  PRESET_LABELS,
   addDays,
   payoutDateOf,
   presetRange,
@@ -14,6 +16,7 @@ import {
 } from "../utils/analytics/period";
 import { loadCommissionPct, saveCommissionPct } from "../utils/analytics/commission";
 import { dayLabel, deltaPct, inr, pctText, rangeLabel } from "../utils/analytics/format";
+import { downloadSalesReportPdf } from "../utils/analytics/salesReportPdf";
 import { PeriodBar } from "../components/analytics/PeriodBar";
 import { CommissionControl } from "../components/analytics/CommissionControl";
 import { Panel, StatTile } from "../components/analytics/ui";
@@ -107,6 +110,27 @@ const Analytics = () => {
 
   const isWeek = preset === "SETTLEMENT_WEEK";
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const downloadPdf = async () => {
+    if (!report) return;
+    setPdfBusy(true);
+    try {
+      await downloadSalesReportPdf(report, {
+        shopName:
+          sessionStorage.getItem("vendorName") ||
+          orders?.find((o) => o.shopDetails?.name)?.shopDetails?.name ||
+          `Store #${shopId ?? ""}`,
+        periodLabel: PRESET_LABELS[preset],
+        isSettlementWeek: isWeek,
+      });
+      toast.success("Sales report downloaded");
+    } catch {
+      toast.error("Couldn't create the PDF. Please try again.");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4 px-4 pt-4 pb-6 lg:space-y-5 lg:p-0">
       {/* Header */}
@@ -120,6 +144,10 @@ const Analytics = () => {
         </div>
         <div className="flex items-center gap-2">
           <CommissionControl pct={pct} onChange={changePct} />
+          <button type="button" onClick={downloadPdf} disabled={!report || pdfBusy} className={chip}>
+            <FileDown size={13} />
+            {pdfBusy ? "Preparing..." : "Download PDF"}
+          </button>
           <button type="button" onClick={refresh} disabled={!!progress} className={chip}>
             <RefreshCw size={13} className={progress ? "animate-spin" : ""} />
             {progress ? "Loading..." : "Refresh"}

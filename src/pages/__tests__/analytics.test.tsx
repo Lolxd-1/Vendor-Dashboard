@@ -3,9 +3,16 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Order } from "../../types/order";
 
-const { allOrdersMock, reloadMock } = vi.hoisted(() => ({ allOrdersMock: vi.fn(), reloadMock: vi.fn() }));
+const { allOrdersMock, reloadMock, pdfMock, toastMock } = vi.hoisted(() => ({
+  allOrdersMock: vi.fn(),
+  reloadMock: vi.fn(),
+  pdfMock: vi.fn(),
+  toastMock: { success: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock("../../hooks/useAllOrders", () => ({ useAllOrders: allOrdersMock }));
+vi.mock("../../utils/analytics/salesReportPdf", () => ({ downloadSalesReportPdf: pdfMock }));
+vi.mock("react-hot-toast", () => ({ default: toastMock }));
 vi.mock("../../stores/useAuthStore", () => ({
   useAuthStore: (sel: (s: { shopId: string }) => unknown) => sel({ shopId: "SHOP1" }),
 }));
@@ -147,6 +154,30 @@ describe("Analytics page — commission (TC4)", () => {
     expect(screen.getByRole("alert").textContent).toBe("Enter a number from 0 to 100.");
     expect(hero().getAllByText("₹220.18").length).toBeGreaterThan(0);
     expect(localStorage.getItem("qv_commission_pct:SHOP1")).toBeNull();
+  });
+});
+
+describe("Download PDF", () => {
+  it("downloads the report for exactly what is on screen", async () => {
+    pdfMock.mockResolvedValue(undefined);
+    render(<Analytics />);
+    await click(screen.getByRole("button", { name: "Previous settlement week" }));
+    await click(screen.getByRole("button", { name: /Download PDF/ }));
+
+    expect(pdfMock).toHaveBeenCalledTimes(1);
+    const [report, meta] = pdfMock.mock.calls[0];
+    expect(report.range.start).toEqual(new Date(2026, 8, 28));
+    expect(report.kpis.net).toBe(1080);
+    expect(meta).toEqual({ shopName: "Store #SHOP1", periodLabel: "Settlement week", isSettlementWeek: true });
+    expect(toastMock.success).toHaveBeenCalledWith("Sales report downloaded");
+  });
+
+  it("says so when the PDF fails", async () => {
+    pdfMock.mockRejectedValue(new Error("boom"));
+    render(<Analytics />);
+    await click(screen.getByRole("button", { name: /Download PDF/ }));
+    expect(toastMock.error).toHaveBeenCalledWith("Couldn't create the PDF. Please try again.");
+    expect((screen.getByRole("button", { name: /Download PDF/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

@@ -18,6 +18,18 @@ export type PeriodPreset =
   | "ALL_TIME"
   | "CUSTOM";
 
+export const PRESET_LABELS: Record<PeriodPreset, string> = {
+  SETTLEMENT_WEEK: "Settlement week",
+  TODAY: "Today",
+  YESTERDAY: "Yesterday",
+  LAST_30_DAYS: "Last 30 days",
+  THIS_MONTH: "This month",
+  LAST_MONTH: "Last month",
+  THIS_YEAR: "This year",
+  ALL_TIME: "All time",
+  CUSTOM: "Custom",
+};
+
 export const startOfDay = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
 // setDate, not +86400000 ms, so a day is always a calendar day.
