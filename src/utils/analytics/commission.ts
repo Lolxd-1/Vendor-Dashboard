@@ -13,7 +13,9 @@ const storageKey = (shopId: string | null) => `qv_commission_pct:${shopId ?? ""}
 // EPSILON so 1.005 rounds to 1.01 like a person would expect, not 1.00.
 export const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 
-export const commissionOf = (gross: number, pct: number): number => round2((gross * pct) / 100);
+// In whole paise: 40.15 × 10% must be 4.02, but in rupee floats 4.015 is 4.01499… and rounds down.
+export const commissionOf = (gross: number, pct: number): number =>
+  Math.round((Math.round(gross * 100) * pct) / 100) / 100;
 
 export const isValidCommissionPct = (pct: number): boolean => Number.isFinite(pct) && pct >= 0 && pct <= 100;
 

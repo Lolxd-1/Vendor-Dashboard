@@ -18,6 +18,14 @@ describe("commission math (TC6)", () => {
     expect(commissionOf(0, 10)).toBe(0);
   });
 
+  it("rounds exact half-paise up even when the rupee amount has no exact binary form", () => {
+    expect(commissionOf(40.15, 10)).toBe(4.02); // 4.015 → 4.02, not 4.01
+    expect(commissionOf(45.55, 10)).toBe(4.56); // 4.555 → 4.56
+    expect(commissionOf(89.1, 5)).toBe(4.46); // 4.455 → 4.46
+    expect(commissionOf(10.05, 10)).toBe(1.01); // 1.005 → 1.01
+    expect(commissionOf(45.55, 7.5)).toBe(3.42); // 3.41625 → 3.42
+  });
+
   it("round2 rounds half up the way a person expects", () => {
     expect(round2(1.005)).toBe(1.01);
     expect(round2(2.675)).toBe(2.68);
