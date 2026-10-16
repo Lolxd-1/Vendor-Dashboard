@@ -28,7 +28,7 @@ export const WeeklyScheduleCard = ({ initialData, onSave, isSaving }: WeeklySche
   
   // ─── 1. State Initialization (Data Hydration) ─────────────────────
   const [weekConfig, setWeekConfig] = useState<Record<DayOfWeek, DayConfig>>(() => {
-    const initialState: any = {};
+    const initialState = {} as Record<DayOfWeek, DayConfig>;
     const currentTime = getCurrentTime();
 
     DAYS.forEach((day) => {
@@ -48,7 +48,7 @@ export const WeeklyScheduleCard = ({ initialData, onSave, isSaving }: WeeklySche
   });
 
   // ─── 2. State Mutators ──────────────────────────────────────────
-  const updateDay = (day: DayOfWeek, key: keyof DayConfig, value: any) => {
+  const updateDay = <K extends keyof DayConfig>(day: DayOfWeek, key: K, value: DayConfig[K]) => {
     setWeekConfig((prev) => ({
       ...prev,
       [day]: { ...prev[day], [key]: value },

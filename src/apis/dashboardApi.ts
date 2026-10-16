@@ -1,9 +1,22 @@
 import api from "./index";
 
+export interface DashboardStatsResponse {
+  response?: {
+    totalOrdersToday?: number;
+    pendingOrdersToday?: number;
+    acceptedOrdersToday?: number;
+    readyOrdersToday?: number;
+    avgAcceptanceTimeSec?: number;
+    avgPreparationTimeSec?: number;
+    revenueToday?: number;
+    completionRate?: number;
+  };
+}
+
 const dashboardApi = api.injectEndpoints({
   endpoints: (build) => ({
     // Accept order with preparation time
-    acceptOrder: build.mutation<any, { orderId: string; preparationTime: number }>({
+    acceptOrder: build.mutation<unknown, { orderId: string; preparationTime: number }>({
       query: ({ orderId, preparationTime }) => ({
         url: `/quickVerse/v2/order/${orderId}/accept`,
         method: "PATCH",
@@ -12,7 +25,7 @@ const dashboardApi = api.injectEndpoints({
     }),
     
     // Reject order
-    rejectOrder: build.mutation<any, { orderId: string; reason: string }>({
+    rejectOrder: build.mutation<unknown, { orderId: string; reason: string }>({
       query: ({ orderId, reason }) => ({
         url: `/quickVerse/v2/order/${orderId}/reject`,
         method: "PATCH",
@@ -21,7 +34,7 @@ const dashboardApi = api.injectEndpoints({
     }),
     
     // Mark order as ready for pickup
-    markOrderReady: build.mutation<any, { orderId: string }>({
+    markOrderReady: build.mutation<unknown, { orderId: string }>({
       query: ({ orderId }) => ({
         url: `/quickVerse/v2/order/${orderId}/ready`,
         method: "PATCH",
@@ -29,7 +42,7 @@ const dashboardApi = api.injectEndpoints({
     }),
     
     // Mark order as handed over to rider
-    handoverOrder: build.mutation<any, { orderId: string }>({
+    handoverOrder: build.mutation<unknown, { orderId: string }>({
       query: ({ orderId }) => ({
         url: `/quickVerse/v2/order/${orderId}/handover`,
         method: "PATCH",
@@ -37,7 +50,7 @@ const dashboardApi = api.injectEndpoints({
     }),
 
     // Get dashboard stats (total, revenue, averages)
-    getDashboardStats: build.query<any, string>({
+    getDashboardStats: build.query<DashboardStatsResponse, string>({
       query: (shopId) => ({
         url: `/quickVerse/v2/order/${shopId}/dashboard-stats`,
         method: "GET",

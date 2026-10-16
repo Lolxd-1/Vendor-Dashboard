@@ -8,8 +8,17 @@ interface OrderDetailsModalProps {
     onClose: () => void;
 }
 
+type AddressFields = {
+    addressLine1?: string;
+    addressLine2?: string;
+    addressLine3?: string;
+    city?: string;
+    state?: string;
+    pincode?: string | number;
+};
+
 // --- BULLETPROOF Address Parser (Handles BOTH new Object AND old Java Map String) ---
-const parseAddress = (addr: any) => {
+const parseAddress = (addr: string | AddressFields | null | undefined) => {
     if (!addr) return "—";
 
     if (typeof addr === 'string') {
@@ -196,7 +205,7 @@ export const OrderDetailsModal = ({ order, onClose }: OrderDetailsModalProps) =>
                             <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400">{totalQty} item{totalQty !== 1 ? "s" : ""}</span>
                         </div>
                         <div className="p-2 divide-y divide-slate-100 dark:divide-zinc-700/50 max-h-[180px] overflow-y-auto custom-scrollbar">
-                            {items.map((item: any, idx: number) => (
+                            {items.map((item, idx) => (
                                 <div key={idx} className="flex justify-between items-center p-2.5 hover:bg-slate-50 dark:hover:bg-zinc-700/30 transition-colors rounded-lg">
                                     <div className="flex flex-col min-w-0 flex-1 mr-2">
                                         <span className="text-sm font-semibold text-slate-700 dark:text-zinc-200 truncate">{item.name}</span>

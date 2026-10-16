@@ -21,7 +21,7 @@ const api = createApi({
       return headers;
     },
   }),
-  endpoints: (_) => ({}),
+  endpoints: () => ({}),
 });
 
 export default api;

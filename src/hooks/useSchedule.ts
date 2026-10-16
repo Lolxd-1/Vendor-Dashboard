@@ -81,7 +81,8 @@ export const useSchedule = () => {
     dayToDelete: DayOfWeek,
     currentOperatingHours: OperatingHours
   ) => {
-    const { [dayToDelete]: removedDay, ...remainingDays } = currentOperatingHours;
+    const remainingDays: Partial<OperatingHours> = { ...currentOperatingHours };
+    delete remainingDays[dayToDelete];
     await saveScheduleGrid(remainingDays as OperatingHours);
   };
 

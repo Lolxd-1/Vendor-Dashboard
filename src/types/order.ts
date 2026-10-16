@@ -116,7 +116,7 @@ export interface Order {
   deliveryPartnerDetails?: DeliveryPartnerDetails | null;
   assignedPartner?: {
     orderStatus?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   } | null;
 }
 

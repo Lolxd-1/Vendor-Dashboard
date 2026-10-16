@@ -16,6 +16,7 @@ import {
 } from "../../utils/print/printAgent";
 import { buildCounterBill, buildKitchenKOT } from "../../utils/print/billTemplates";
 import { printTextDetailed } from "../../utils/print/printAgent";
+import type { Order } from "../../types/order";
 import toast from "react-hot-toast";
 
 // exp1: One-time setup per shop PC. Dropdowns list REAL printers by default
@@ -140,7 +141,8 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
   };
 
   const testPrint = async (kind: "counter" | "kitchen") => {
-    const demo: any = {
+    // A sample with only the fields the bill and KOT read.
+    const demo = {
       orderId: "TEST-123",
       creationTime: new Date().toISOString(),
       fulfillmentOption: "Delivery",
@@ -152,7 +154,7 @@ export const PrinterSettingsModal = ({ onClose }: { onClose: () => void }) => {
       preparationTime: 15,
       orderItem: [{ id: 1, name: "Paneer Tikka Biryani", itemCount: 1, itemPrice: 250 }],
       shopDetails: { name: "Heaven Game Restro", address: { address: "Canal Road, Beed 431122", city: "", state: "", postalCode: "" } },
-    };
+    } as Order;
     const text = kind === "counter" ? buildCounterBill(demo, 15) : buildKitchenKOT(demo, 15);
     // Temporarily override name for the test target
     const s = getPrinterSettings();

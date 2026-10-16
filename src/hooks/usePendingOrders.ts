@@ -37,7 +37,7 @@ export const usePendingOrder = (order: Order | string) => {
           toast.error("Accepted, but auto-print failed — use Reprint");
         }
       }
-    } catch (error) {
+    } catch {
       // The backend may have committed before the reply was lost, in which case
       // the next poll files this order into Accepted looking completely normal —
       // with no bill and no KOT. Never auto-retry or auto-print on this path;
@@ -65,7 +65,7 @@ export const usePendingOrder = (order: Order | string) => {
       await rejectOrder({ orderId, reason: rejectReason }).unwrap();
       removeOrder(orderId);
       toast.success(`Order ${orderId} Rejected`);
-    } catch (error) {
+    } catch {
       toast.error(`Failed to reject order ${orderId}`);
     }
   };

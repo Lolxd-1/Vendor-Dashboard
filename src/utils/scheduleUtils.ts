@@ -1,10 +1,10 @@
-import type { DayOfWeek } from "../types/schedule";
+import type { DayOfWeek, OperatingHours } from "../types/schedule";
 
 /**
  * Determines if the shop is currently offline based on its operating hours schedule.
  * Shared utility used by both Navbar (status badge) and StoreSchedule page.
  */
-export const checkIsCurrentlyOfflineBySchedule = (operatingHours: any): boolean => {
+export const checkIsCurrentlyOfflineBySchedule = (operatingHours: Partial<OperatingHours>): boolean => {
   const now = new Date();
   const days: DayOfWeek[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const currentDay = days[now.getDay()];

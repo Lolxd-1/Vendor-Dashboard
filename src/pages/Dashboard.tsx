@@ -1,5 +1,5 @@
 import { CheckCircle, FileClock, PlayCircle, RefreshCcw, Printer } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useAuthStore } from "../stores/useAuthStore";
 import { useGetVendorOrdersQuery } from "../apis/orderApi";
@@ -55,7 +55,7 @@ const Dashboard = () => {
   const [printerOnline, setPrinterOnline] = useState<boolean | null>(null);
   // exp2: spooler truth — red dot when a SELECTED queue reports error/stuck jobs.
   const [queueError, setQueueError] = useState<string | null>(null);
-  const prevPendingCount = useRef(pendingOrders.length);
+  const [prevPendingCount, setPrevPendingCount] = useState(pendingOrders.length);
 
   useEffect(() => {
     const check = async () => {
@@ -99,12 +99,10 @@ const Dashboard = () => {
   }, [allOrders, allOrdersAt, reconcile]);
 
   // Auto-switch to Pending tab when new pending orders arrive
-  useEffect(() => {
-    if (pendingOrders.length > prevPendingCount.current) {
-      setActiveTab("pending");
-    }
-    prevPendingCount.current = pendingOrders.length;
-  }, [pendingOrders.length]);
+  if (pendingOrders.length !== prevPendingCount) {
+    setPrevPendingCount(pendingOrders.length);
+    if (pendingOrders.length > prevPendingCount) setActiveTab("pending");
+  }
 
   const tabs: { key: TabKey; label: string; count: number; color: string; activeBg: string; activeBorder: string; activeText: string; icon: React.ReactNode; hasBell: boolean }[] = [
     {

@@ -3,13 +3,13 @@ import { CalendarPlus, Loader2, Info, AlertCircle, CheckCircle2 } from "lucide-r
 import { useGetVendorScheduleQuery } from "../apis/schedule";
 import { useSchedule } from "../hooks/useSchedule";
 import { useAuthStore } from "../stores/useAuthStore";
-import type { DayOfWeek } from "../types/schedule";
+import type { DayOfWeek, OperatingHours } from "../types/schedule";
 
 import { WeeklyScheduleCard } from "../components/Schedule/WeeklyScheduleCard";
 import { UpcomingSchedulesList } from "../components/Schedule/UpcomingScheduleList";
 
 
-const checkIsCurrentlyOfflineBySchedule = (operatingHours: any): boolean => {
+const checkIsCurrentlyOfflineBySchedule = (operatingHours: Partial<OperatingHours>): boolean => {
   const now = new Date();
   const days: DayOfWeek[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const currentDay = days[now.getDay()]; // Get today's actual day (e.g., "Tue")
@@ -63,7 +63,7 @@ export const StoreSchedulePage = () => {
   const isOfflineByClock = checkIsCurrentlyOfflineBySchedule(operatingHours);
   const isShopOnline = scheduleData?.manualOfflineOverride ? false : !isOfflineByClock;
 
-  const handleEditClick = (_day: DayOfWeek) => {
+  const handleEditClick = () => {
     if (!isFormOpen) toggleFormPanel();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };

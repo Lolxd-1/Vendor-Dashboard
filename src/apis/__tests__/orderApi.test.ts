@@ -5,6 +5,12 @@ import api from "../index";
 import { toVendorOrdersPage, type OrderFilterParams } from "../orderApi";
 import { OrderStatusFilter, TimeFilterOption } from "../../types/filters";
 
+// The API base comes from VITE_API_URL in a local .env that is not in the repo. Pin it to a
+// reserved .test host (never resolves) so these tests don't depend on .env and can't reach a server.
+vi.hoisted(() => {
+  vi.stubEnv("VITE_API_URL", "http://api.test/");
+});
+
 // Runs the real endpoints through a real store; only the network is faked.
 let requested: URL[] = [];
 const backendBody = { response: { orders: [{ orderId: "1" }, { orderId: "2" }], currentPage: 0, totalPages: 8, totalElements: 386 } };

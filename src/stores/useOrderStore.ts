@@ -33,5 +33,10 @@ export const useOrderStore = create<OrderState>((set) => ({
   }),
 }));
 
-// Expose to window for debugging 
-(window as any).orderStore = useOrderStore;
+// Expose to window for debugging
+declare global {
+  interface Window {
+    orderStore: typeof useOrderStore;
+  }
+}
+window.orderStore = useOrderStore;

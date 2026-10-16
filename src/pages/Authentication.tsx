@@ -16,6 +16,8 @@ import { useThemeStore } from "../stores/useThemeStore";
 const MOBILE_LENGTH = 10;
 const INDIAN_MOBILE_REGEX = /^[6-9]\d{9}$/;
 
+type ApiError = { data?: { error?: { message?: string } } };
+
 const Authentication = () => {
   const navigate = useNavigate();
   const [showOtpModal, setShowOtpModal] = useState(false);
@@ -32,7 +34,7 @@ const Authentication = () => {
   // Login page defaults to light theme
   useEffect(() => {
     setTheme("light");
-  }, []);
+  }, [setTheme]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -63,8 +65,8 @@ const Authentication = () => {
         setOtpDigits(["", "", "", ""]);
         setShowOtpModal(true);
         toast.success("OTP sent via SMS");
-      } catch (error: any) {
-        const errorMessage = error?.data?.error?.message || "Failed to send OTP. Please try again.";
+      } catch (error) {
+        const errorMessage = (error as ApiError)?.data?.error?.message || "Failed to send OTP. Please try again.";
 
         toast.error(errorMessage, {
           id: "otp-error"
@@ -117,8 +119,8 @@ const Authentication = () => {
         console.warn("[audio] arm failed at login — rearm net will retry on next click");
       }
       navigate("/vendor/dashboard", { replace: true });
-    } catch (error: any) {
-      const errorMessage = error?.data?.error?.message || "Invalid OTP";
+    } catch (error) {
+      const errorMessage = (error as ApiError)?.data?.error?.message || "Invalid OTP";
       toast.error(errorMessage, {
         id: "otp-error"
       });

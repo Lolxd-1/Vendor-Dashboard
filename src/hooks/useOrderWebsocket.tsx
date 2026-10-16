@@ -8,16 +8,17 @@ import { isTokenExpired, useAuthStore } from "../stores/useAuthStore";
 import { isTerminalState, normalisePhase, useDashboardStore } from "../stores/useDashboardStore";
 
 // ✅ Validator for new orders
-const isValidOrder = (data: any): boolean => {
+const isValidOrder = (data: unknown): boolean => {
   if (typeof data !== "object" || data === null) return false;
-  
+  const order = data as { orderId?: unknown; orderItem?: unknown };
+
   // It should at least have an orderId
-  if (typeof data.orderId !== "string") return false;
+  if (typeof order.orderId !== "string") return false;
 
   // At least one item under `orderItem` — the only field the card and the bill
   // read. An empty list (or items under any other name) rang as a blank card
   // and printed a bill with no items. The next REST poll brings the full order.
-  return Array.isArray(data.orderItem) && data.orderItem.length > 0;
+  return Array.isArray(order.orderItem) && order.orderItem.length > 0;
 };
 
 // Raw STOMP frames include the CONNECT frame's `Authorization: Bearer <jwt>` header, so this

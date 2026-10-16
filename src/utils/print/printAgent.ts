@@ -71,7 +71,7 @@ export const getAgentPrinterDetails = async (): Promise<PrinterInfo[]> => {
     const data = await res.json();
     // Preferred: rich detail from agent v1.3+
     if (Array.isArray(data?.detail)) {
-      return (data.detail as any[])
+      return (data.detail as { name?: unknown; driver?: unknown; port?: unknown; isVirtual?: unknown }[])
         .filter((d) => typeof d?.name === "string" && d.name.trim())
         .map((d) => ({
           name: String(d.name),
@@ -271,7 +271,7 @@ export const getAgentQueue = async (): Promise<QueueInfo[]> => {
     if (!res.ok) return [];
     const data = await res.json();
     if (!Array.isArray(data?.queues)) return [];
-    return (data.queues as any[])
+    return (data.queues as { name?: unknown; status?: unknown; jobs?: unknown; hasError?: unknown; errorText?: unknown }[])
       .filter((q) => typeof q?.name === "string" && q.name.trim())
       .map((q) => ({
         name: String(q.name),

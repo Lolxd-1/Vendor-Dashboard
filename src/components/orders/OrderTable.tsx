@@ -39,7 +39,7 @@ const formatDate = (dateString: string): string => {
     const strTime = pad(hours) + ':' + minutes + ' ' + ampm;
 
     return `${day}-${month}-${year}, ${strTime}`;
-  } catch (e) {
+  } catch {
     return dateString;
   }
 };

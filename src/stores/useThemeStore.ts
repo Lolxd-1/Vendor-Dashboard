@@ -25,7 +25,9 @@ const getStoredTheme = (): Theme => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === "light" || stored === "dark") return stored;
-  } catch {}
+  } catch {
+    // Storage blocked: fall back to the default.
+  }
   return "dark";
 };
 

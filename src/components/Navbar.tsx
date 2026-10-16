@@ -8,6 +8,27 @@ interface NavbarProps {
   onHamburgerClick: () => void;
 }
 
+// Reusable status badge
+const StatusBadge = ({ online, size = "sm" }: { online: boolean; size?: "sm" | "xs" }) => {
+  const textSize = size === "xs" ? "text-[9px]" : "text-[10px]";
+  const dotSize = size === "xs" ? 6 : 8;
+  return online ? (
+    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20 shrink-0`}>
+      <Circle className="fill-emerald-500 text-emerald-500 animate-pulse" size={dotSize} />
+      <span className={`${textSize} font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider`}>
+        Online
+      </span>
+    </div>
+  ) : (
+    <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 border border-red-200 dark:bg-red-500/10 dark:border-red-500/20 shrink-0`}>
+      <Circle className="fill-red-500 text-red-500" size={dotSize} />
+      <span className={`${textSize} font-black text-red-700 dark:text-red-400 uppercase tracking-wider`}>
+        Offline
+      </span>
+    </div>
+  );
+};
+
 const Navbar = ({ onHamburgerClick }: NavbarProps) => {
   const shopId = useAuthStore((state) => state.shopId);
   const { stats } = useDashboardStats();
@@ -27,27 +48,6 @@ const Navbar = ({ onHamburgerClick }: NavbarProps) => {
 
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-
-  // Reusable status badge
-  const StatusBadge = ({ size = "sm" }: { size?: "sm" | "xs" }) => {
-    const textSize = size === "xs" ? "text-[9px]" : "text-[10px]";
-    const dotSize = size === "xs" ? 6 : 8;
-    return isShopOnline ? (
-      <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20 shrink-0`}>
-        <Circle className="fill-emerald-500 text-emerald-500 animate-pulse" size={dotSize} />
-        <span className={`${textSize} font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider`}>
-          Online
-        </span>
-      </div>
-    ) : (
-      <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 border border-red-200 dark:bg-red-500/10 dark:border-red-500/20 shrink-0`}>
-        <Circle className="fill-red-500 text-red-500" size={dotSize} />
-        <span className={`${textSize} font-black text-red-700 dark:text-red-400 uppercase tracking-wider`}>
-          Offline
-        </span>
-      </div>
-    );
-  };
 
   return (
     <header className="flex items-center justify-between border-b border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-t-xl lg:px-6 lg:h-[72px] px-3 py-2.5">
@@ -84,7 +84,7 @@ const Navbar = ({ onHamburgerClick }: NavbarProps) => {
         </div>
 
         {/* Right: Online/Offline status badge */}
-        <StatusBadge size="xs" />
+        <StatusBadge online={isShopOnline} size="xs" />
       </div>
 
       {/* ────────────────────────────────────────────────
@@ -98,7 +98,7 @@ const Navbar = ({ onHamburgerClick }: NavbarProps) => {
           </h2>
           <span className="text-xs text-slate-400 dark:text-zinc-500">#{shopId}</span>
         </div>
-        <StatusBadge size="sm" />
+        <StatusBadge online={isShopOnline} size="sm" />
       </div>
 
       {/* Desktop Right: Time + Stats */}

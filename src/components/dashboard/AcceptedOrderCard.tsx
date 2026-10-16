@@ -42,7 +42,7 @@ export const AcceptedOrderCard = memo(function AcceptedOrderCard({ order, onView
       await markReady({ orderId: order.orderId }).unwrap();
       moveToReady(order.orderId);
       toast.success(`Order ${order.orderId} marked ready`);
-    } catch (error) {
+    } catch {
       toast.error(`Failed to mark ready for ${order.orderId}`);
     }
   };

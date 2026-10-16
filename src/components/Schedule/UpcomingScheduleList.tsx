@@ -29,7 +29,7 @@ export const UpcomingSchedulesList = ({ operatingHours, onEditClick, onDeleteCli
 
   // Filter only active days
   const activeSchedules = Object.entries(operatingHours)
-    .filter(([_, slot]) => slot.openTime && slot.closeTime)
+    .filter(([, slot]) => slot.openTime && slot.closeTime)
     .map(([day, slot]) => ({
       day: day as DayOfWeek,
       ...slot,

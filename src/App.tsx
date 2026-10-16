@@ -19,8 +19,14 @@ const RouteFallback = () => (
   </div>
 );
 
+declare global {
+  interface Window {
+    toast: typeof toast;
+  }
+}
+window.toast = toast;
+
 const App = () => {
-  (window as any).toast = toast;
   return (
     <BrowserRouter>
      <Toaster position="top-center" reverseOrder={false} />

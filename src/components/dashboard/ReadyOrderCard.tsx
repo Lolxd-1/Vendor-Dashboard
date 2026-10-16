@@ -27,7 +27,7 @@ export const ReadyOrderCard = memo(function ReadyOrderCard({ order, onViewDetail
       await handover({ orderId: order.orderId }).unwrap();
       removeOrder(order.orderId); // Done!
       toast.success(`Order ${order.orderId} handed over successfully`);
-    } catch (error) {
+    } catch {
       toast.error(`Failed to handover ${order.orderId}`);
     }
   };
