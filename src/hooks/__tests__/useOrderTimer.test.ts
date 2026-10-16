@@ -55,4 +55,24 @@ describe("useOrderTimer", () => {
     rerender({ start: undefined as unknown as string });
     expect(result.current.displayTime).toBe("--:--");
   });
+
+  it("is right at once when the start time arrives after the card mounted without one", () => {
+    const { result, rerender } = renderHook(({ start }) => useOrderTimer(start, "UP"), {
+      initialProps: { start: undefined as string | undefined },
+    });
+    act(() => vi.advanceTimersByTime(30_000));
+    rerender({ start: "2026-10-16T09:59:59.000Z" }); // 1s before mount, now 30s later
+    act(() => vi.advanceTimersByTime(0));
+    expect(result.current.displayTime).toBe("00:31");
+  });
+
+  it("DOWN starts from the full prep time when the start time arrives late", () => {
+    const { result, rerender } = renderHook(({ start }) => useOrderTimer(start, "DOWN", 15), {
+      initialProps: { start: undefined as string | undefined },
+    });
+    act(() => vi.advanceTimersByTime(120_000));
+    rerender({ start: "2026-10-16T10:02:00.000Z" }); // accepted just now
+    act(() => vi.advanceTimersByTime(0));
+    expect(result.current.displayTime).toBe("15:00");
+  });
 });

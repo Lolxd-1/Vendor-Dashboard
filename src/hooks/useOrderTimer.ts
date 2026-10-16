@@ -50,8 +50,14 @@ export const useOrderTimer = (startTime: string | undefined, type: "UP" | "DOWN"
 
   useEffect(() => {
     if (!valid) return;
-    const intervalId = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(intervalId);
+    const tick = () => setNow(Date.now());
+    // `now` stood still while the start time was missing; refresh it right away.
+    const kick = setTimeout(tick, 0);
+    const intervalId = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(kick);
+      clearInterval(intervalId);
+    };
   }, [valid, startTimestamp, type, durationMinutes]);
 
   const displayTime = valid ? calculateTime(startTimestamp, type, durationMinutes, now) : "--:--";
